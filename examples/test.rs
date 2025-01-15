@@ -52,7 +52,7 @@ fn main() {
 
     let mut agent = MultiStepAgent::new(
         OpenAIServerModel::new(None, None, None),
-        vec![GoogleSearchTool::new(None), VisitWebsiteTool::new()],
+        vec![Box::new(GoogleSearchTool::new(None)), Box::new(VisitWebsiteTool::new())],
         None,
         None,
         Some("multistep_agent"),

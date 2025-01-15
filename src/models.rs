@@ -31,7 +31,7 @@ pub trait Model {
     fn run(
         &self,
         input_messages: Vec<Message>,
-        tools: Vec<&Box<dyn Tool>>,
+        tools: Vec<Box<&dyn Tool>>,
         max_tokens: Option<usize>,
         args: Option<HashMap<String, Vec<String>>>
     ) -> Result<impl ModelResponse, AgentError>;
@@ -71,7 +71,7 @@ impl OpenAIServerModel {
 }
 
 impl Model for OpenAIServerModel {
-    fn run(&self, messages: Vec<Message>, tools_to_call_from: Vec<&Box<dyn Tool>>, max_tokens: Option<usize>, args: Option<HashMap<String, Vec<String>>>) -> Result<impl ModelResponse, AgentError> {
+    fn run(&self, messages: Vec<Message>, tools_to_call_from: Vec<Box<&dyn Tool>>, max_tokens: Option<usize>, args: Option<HashMap<String, Vec<String>>>) -> Result<impl ModelResponse, AgentError> {
         let max_tokens = max_tokens.unwrap_or(1500);
         // messages.iter().for_each(|message| println!("Message: {}", message.content));
         let messages = messages.iter().map(|message| {
@@ -82,7 +82,7 @@ impl Model for OpenAIServerModel {
         }).collect::<Vec<_>>();
 
         let tools = tools_to_call_from.into_iter()
-            .map(|tool| get_json_schema(tool))
+            .map(|tool| get_json_schema(&**tool))
             .collect::<Vec<_>>();
         let body = json!({
             "model": self.model_id,
@@ -105,7 +105,7 @@ impl Model for OpenAIServerModel {
         .header("Authorization", format!("Bearer {}", self.api_key))
         .json(&body)
         .send()
-        .map_err(|e| AgentError::Generation(format!("Failed to get response from OpenAI: {}", e.to_string())))?;
+        .map_err(|e| AgentError::Generation(format!("Failed to get response from OpenAI: {}", e)))?;
 
         match response.status() {
             reqwest::StatusCode::OK => {

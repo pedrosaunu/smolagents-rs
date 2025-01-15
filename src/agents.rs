@@ -2,14 +2,14 @@ use crate::errors::AgentError;
 use crate::models::Message;
 use crate::models::{MessageRole, Model, ModelResponse};
 use crate::prompts::{
-    user_prompt_plan, FUNCTION_CALLING_SYSTEM_PROMPT, SYSTEM_PROMPT_FACTS, SYSTEM_PROMPT_PLAN
+    user_prompt_plan, FUNCTION_CALLING_SYSTEM_PROMPT, SYSTEM_PROMPT_FACTS, SYSTEM_PROMPT_PLAN,
 };
 use crate::tools::{FinalAnswerTool, Tool};
 use std::collections::HashMap;
 
 use anyhow::{Error as E, Result};
 use colored::Colorize;
-use log:: info;
+use log::info;
 const DEFAULT_TOOL_DESCRIPTION_TEMPLATE: &str = r#"
 {{ tool.name }}: {{ tool.description }}
     Takes inputs: {{tool.inputs}}
@@ -45,7 +45,6 @@ pub struct AgentStep {
     _step: usize,
 }
 
-
 #[derive(Debug, Clone)]
 pub struct ToolCall {
     name: String,
@@ -54,7 +53,6 @@ pub struct ToolCall {
 }
 
 // Define a trait for the parent functionality
-
 
 #[derive(Debug)]
 pub struct MultiStepAgent<M: Model> {
@@ -88,21 +86,22 @@ impl<M: Model + Debug> Agent for MultiStepAgent<M> {
                 let agent_memory = self.write_inner_memory_from_logs(None);
                 self.input_messages = Some(agent_memory.clone());
                 step_log.agent_memory = Some(agent_memory.clone());
-                let tools: Vec<&Box<dyn Tool>> = self.tools.values().collect();
-                let tools: Vec<&Box<dyn Tool>> = tools.iter().map(|&tool| tool).collect();
-                let model_message = self.model.run(
-                    self.input_messages.as_ref().unwrap().clone(),
-                    tools,
-                    None,
-                    Some(HashMap::from([(
-                        "stop_sequences".to_string(),
-                        vec!["Observation:".to_string()],
-                    )])),
-                ).unwrap();
-
-                let tool_names = model_message
-                    .get_tools_used()
+                let tools: Vec<Box<&dyn Tool>> =
+                    self.tools.values().map(|tool| Box::new(&**tool)).collect();
+                let model_message = self
+                    .model
+                    .run(
+                        self.input_messages.as_ref().unwrap().clone(),
+                        tools,
+                        None,
+                        Some(HashMap::from([(
+                            "stop_sequences".to_string(),
+                            vec!["Observation:".to_string()],
+                        )])),
+                    )
                     .unwrap();
+
+                let tool_names = model_message.get_tools_used().unwrap();
                 let tool_name = tool_names.first().unwrap().clone().function.name;
                 let tool_args = model_message
                     .get_tools_used()
@@ -123,7 +122,7 @@ impl<M: Model + Debug> Agent for MultiStepAgent<M> {
                     "final_answer" => {
                         info!("Executing tool call: {}", tool_name);
                         let answer = self.execute_tool_call(&tool_name, tool_args);
-                        return Ok(Some(answer.unwrap()));
+                        Ok(Some(answer.unwrap()))
                     }
                     _ => {
                         step_log.tool_call = Some(ToolCall {
@@ -132,11 +131,14 @@ impl<M: Model + Debug> Agent for MultiStepAgent<M> {
                             id: tool_call_id.clone(),
                         });
 
-                        info!("Executing tool call: {} with arguments: {:?}", tool_name, tool_args);
+                        info!(
+                            "Executing tool call: {} with arguments: {:?}",
+                            tool_name, tool_args
+                        );
                         let observation = self.execute_tool_call(&tool_name, tool_args).unwrap();
                         step_log.observations = Some(observation.clone());
                         info!("Observation: {}", observation);
-                        return Ok(None);
+                        Ok(None)
                     }
                 }
             }
@@ -146,7 +148,6 @@ impl<M: Model + Debug> Agent for MultiStepAgent<M> {
             }
         }
     }
-    
 }
 
 impl<M: Model + Debug> MultiStepAgent<M> {
@@ -161,17 +162,14 @@ impl<M: Model + Debug> MultiStepAgent<M> {
         let name = "MultiStepAgent";
 
         let system_prompt_template = match system_prompt {
-  
             Some(prompt) => prompt.to_string(),
-            None => {
-                FUNCTION_CALLING_SYSTEM_PROMPT.to_string()
-            }
+            None => FUNCTION_CALLING_SYSTEM_PROMPT.to_string(),
         };
         let description = match description {
             Some(desc) => desc.to_string(),
             None => "A multi-step agent that can solve tasks using a series of tools".to_string(),
         };
-        let final_answer_tool: Box<dyn Tool> = FinalAnswerTool::new();
+        let final_answer_tool: Box<dyn Tool> = Box::new(FinalAnswerTool::new());
         let mut tools: HashMap<String, Box<dyn Tool>> = tools
             .into_iter()
             .map(|tool| (tool.name().to_string(), tool))
@@ -197,9 +195,9 @@ impl<M: Model + Debug> MultiStepAgent<M> {
     }
 
     fn initialize_system_prompt(&mut self) -> Result<String> {
-        let tools: Vec<&Box<dyn Tool>> = self.tools.values().collect();
-        self.system_prompt_template =
-            format_prompt_with_tools(&tools, &self.system_prompt_template);
+        let tools: Vec<Box<&dyn Tool>> =
+            self.tools.values().map(|tool| Box::new(&**tool)).collect();
+        self.system_prompt_template = format_prompt_with_tools(tools, &self.system_prompt_template);
         match &self.managed_agents {
             Some(managed_agents) => {
                 self.system_prompt_template = format_prompt_with_managed_agent_description(
@@ -286,7 +284,7 @@ impl<M: Model + Debug> MultiStepAgent<M> {
                     }
                     if step_log.tool_call.is_some()
                         && (step_log.error.is_some() || step_log.observations.is_some())
-                    {   
+                    {
                         let mut message_content = "".to_string();
                         if step_log.error.is_some() {
                             message_content = "Error: ".to_owned() + step_log.error.as_ref().unwrap().message()+"\nNow let's retry: take care not to repeat previous errors! If you have retried several times, try a completely different approach.\n";
@@ -322,7 +320,6 @@ impl<M: Model + Debug> MultiStepAgent<M> {
         Ok(output_str.clone())
     }
 
-
     pub fn run(&mut self, task: &str, stream: bool, reset: bool) -> Result<String> {
         // self.task = task.to_string();
         self.task = task.to_string();
@@ -331,12 +328,10 @@ impl<M: Model + Debug> MultiStepAgent<M> {
         if reset {
             self.logs = Vec::new();
             self.logs.push(system_prompt_step);
+        } else if self.logs.is_empty() {
+            self.logs.push(system_prompt_step);
         } else {
-            if self.logs.len() == 0 {
-                self.logs.push(system_prompt_step);
-            } else {
-                self.logs[0] = system_prompt_step;
-            }
+            self.logs[0] = system_prompt_step;
         }
         self.logs.push(Step::TaskStep(task.to_string()));
         match stream {
@@ -351,7 +346,7 @@ impl<M: Model + Debug> MultiStepAgent<M> {
 
     pub fn direct_run(&mut self, _task: &str) -> Result<String> {
         let mut final_answer: Option<String> = None;
-        while final_answer == None && self.step_number < self.max_steps {
+        while final_answer.is_none() && self.step_number < self.max_steps {
             let mut step_log = Step::ActionStep(AgentStep {
                 agent_memory: None,
                 llm_output: None,
@@ -363,15 +358,19 @@ impl<M: Model + Debug> MultiStepAgent<M> {
             final_answer = self.step(&mut step_log)?;
             self.logs.push(step_log);
         }
-        info!("Final answer: {}", final_answer.clone().unwrap_or("Could not find answer".to_string()));
+        info!(
+            "Final answer: {}",
+            final_answer
+                .clone()
+                .unwrap_or("Could not find answer".to_string())
+        );
         Ok(final_answer.unwrap())
     }
 
-    pub fn planning_step(&mut self, task: &str, is_first_step: bool, _step: usize) -> () {
-        match is_first_step {
-            true => {
-                let message_prompt_facts = Message {
-                    role: MessageRole::System,
+    pub fn planning_step(&mut self, task: &str, is_first_step: bool, _step: usize) {
+        if is_first_step {
+            let message_prompt_facts = Message {
+                role: MessageRole::System,
                     content: SYSTEM_PROMPT_FACTS.to_string(),
                 };
                 let message_prompt_task = Message {
@@ -401,9 +400,13 @@ impl<M: Model + Debug> MultiStepAgent<M> {
                     role: MessageRole::System,
                     content: SYSTEM_PROMPT_PLAN.to_string(),
                 };
-                let tool_descriptions =
-                    get_tool_descriptions(&self.tools.values().collect::<Vec<&Box<dyn Tool>>>())
-                        .join("\n");
+                let tool_descriptions = get_tool_descriptions(
+                    self.tools
+                        .values()
+                        .map(|tool| Box::new(&**tool))
+                        .collect::<Vec<Box<&dyn Tool>>>(),
+                )
+                .join("\n");
                 let message_user_prompt_plan = Message {
                     role: MessageRole::User,
                     content: user_prompt_plan(
@@ -438,16 +441,13 @@ impl<M: Model + Debug> MultiStepAgent<M> {
                 self.logs.push(Step::PlanningStep(
                     final_plan_redaction.clone(),
                     final_facts_redaction,
-                ));
-                info!("Plan: {}", final_plan_redaction.blue().bold());
-                ()
-            }
-            false => (),
-        };
+            ));
+            info!("Plan: {}", final_plan_redaction.blue().bold());
+        }
     }
 }
 
-pub fn get_tool_description_with_args(tool: &Box<dyn Tool>) -> String {
+pub fn get_tool_description_with_args(tool: &dyn Tool) -> String {
     let mut description = DEFAULT_TOOL_DESCRIPTION_TEMPLATE.to_string();
     description = description.replace("{{ tool.name }}", tool.name());
     description = description.replace("{{ tool.description }}", tool.description());
@@ -470,17 +470,17 @@ pub fn get_tool_description_with_args(tool: &Box<dyn Tool>) -> String {
     description
 }
 
-pub fn get_tool_descriptions(tools: &[&Box<dyn Tool>]) -> Vec<String> {
+pub fn get_tool_descriptions(tools: Vec<Box<&dyn Tool>>) -> Vec<String> {
     tools
-        .iter()
-        .map(|tool| get_tool_description_with_args(tool))
+        .into_iter()
+        .map(|tool| get_tool_description_with_args(&**tool))
         .collect()
 }
-pub fn format_prompt_with_tools<'a>(
-    tools: &'a [&Box<dyn Tool>],
-    prompt_template: &'a str,
+pub fn format_prompt_with_tools(
+    tools: Vec<Box<&dyn Tool>>,
+    prompt_template: &str,
 ) -> String {
-    let tool_descriptions = get_tool_descriptions(tools);
+    let tool_descriptions = get_tool_descriptions(tools.clone());
     let mut prompt = prompt_template.to_string();
     prompt = prompt.replace("{{tool_descriptions}}", &tool_descriptions.join("\n"));
     if prompt.contains("{{tool_names}}") {
@@ -508,21 +508,19 @@ pub fn format_prompt_with_managed_agent_description(
     managed_agents: &HashMap<String, Box<dyn Agent>>,
     agent_descriptions_placeholder: Option<&str>,
 ) -> Result<String> {
-    let agent_descriptions_placeholder = match agent_descriptions_placeholder {
-        Some(placeholder) => placeholder,
-        None => "{{managed_agents_descriptions}}",
-    };
+    let agent_descriptions_placeholder =
+        agent_descriptions_placeholder.unwrap_or("{{managed_agents_descriptions}}");
 
     if !prompt_template.contains(agent_descriptions_placeholder) {
         return Err(E::msg("The prompt template does not contain the placeholder for the managed agents descriptions"));
     }
 
     if managed_agents.keys().len() > 0 {
-        return Ok(prompt_template.replace(
+        Ok(prompt_template.replace(
             agent_descriptions_placeholder,
             &show_agents_description(managed_agents),
-        ));
+        ))
     } else {
-        return Ok(prompt_template.replace(agent_descriptions_placeholder, ""));
+        Ok(prompt_template.replace(agent_descriptions_placeholder, ""))
     }
 }

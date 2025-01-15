@@ -52,10 +52,15 @@ impl Tool for BaseTool {
 pub struct VisitWebsiteTool {
     pub tool: BaseTool,
 }
+impl Default for VisitWebsiteTool {
+    fn default() -> Self {
+        VisitWebsiteTool::new()
+    }
+}
 
 impl VisitWebsiteTool {
-    pub fn new() -> Box<dyn Tool> {
-        Box::new(VisitWebsiteTool {
+    pub fn new() -> Self {
+        VisitWebsiteTool {
             tool: BaseTool {
                 name: "visit_website",
                 description: "Visits a webpage at the given url and reads its content as a markdown string. Use this to browse webpages",
@@ -69,7 +74,7 @@ impl VisitWebsiteTool {
                 output_type: "string",
                 is_initialized: false,
             },
-        })
+        }
     }
 
     pub fn forward(&self, url: &str) -> String {
@@ -127,7 +132,7 @@ impl Tool for VisitWebsiteTool {
     }
 }
 
-pub fn get_json_schema(tool: &Box<dyn Tool>) -> serde_json::Value {
+pub fn get_json_schema(tool: &dyn Tool) -> serde_json::Value {
     let mut properties = HashMap::new();
     for (key, value) in tool.inputs().iter() {
         // Create a new HashMap without the 'required' field
@@ -158,14 +163,19 @@ pub fn get_json_schema(tool: &Box<dyn Tool>) -> serde_json::Value {
     })
 }
 
+
 #[derive(Debug, Serialize)]
 pub struct FinalAnswerTool {
     pub tool: BaseTool,
 }
-
+impl Default for FinalAnswerTool {
+    fn default() -> Self {
+        FinalAnswerTool::new()
+    }
+}
 impl FinalAnswerTool {
-    pub fn new() -> Box<dyn Tool> {
-        Box::new(FinalAnswerTool {
+    pub fn new() -> Self {
+        FinalAnswerTool {
             tool: BaseTool {
                 name: "final_answer",
                 description: "Provides a final answer to the given problem.",
@@ -180,7 +190,7 @@ impl FinalAnswerTool {
                 output_type: "string",
                 is_initialized: false,
             },
-        })
+        }
     }
 }
 
@@ -213,11 +223,17 @@ pub struct GoogleSearchTool {
     pub api_key: String,
 }
 
+impl Default for GoogleSearchTool {
+    fn default() -> Self {
+        GoogleSearchTool::new(None)
+    }
+}
+
 impl GoogleSearchTool {
-    pub fn new(api_key: Option<String>) -> Box<dyn Tool> {
+    pub fn new(api_key: Option<String>) -> Self {
         let api_key = api_key.unwrap_or(std::env::var("SERPAPI_API_KEY").unwrap());
 
-        Box::new(GoogleSearchTool {
+        GoogleSearchTool {
             tool: BaseTool {
                 name: "google_search",
                 description: "Performs a google web search for your query then returns a string of the top search results.",
@@ -237,7 +253,7 @@ impl GoogleSearchTool {
                 is_initialized: false,
             },
             api_key,
-        })
+        }
     }
 
     fn forward(&self, query: &str, filter_year: Option<&str>) -> String {
@@ -267,7 +283,7 @@ impl GoogleSearchTool {
             Ok(resp) => {
                 if resp.status().is_success() {
                     let results: serde_json::Value = resp.json().unwrap();
-                    if !results.get("organic_results").is_some() {
+                    if results.get("organic_results").is_none() {
                         if filter_year.is_some() {
                             return format!("'organic_results' key not found for query: '{}' with filtering on year={}. Use a less restrictive query or do not filter on year.", query, filter_year.unwrap());
                         } else {
@@ -312,9 +328,9 @@ impl GoogleSearchTool {
                         web_snippets.push(redacted_version);
                     }
 
-                    return format!("## Search Results\n{}", web_snippets.join("\n\n"));
+                    format!("## Search Results\n{}", web_snippets.join("\n\n"))
                 } else {
-                    return format!("Failed to fetch search results: HTTP {}, Error: {}", resp.status(), resp.text().unwrap());
+                    format!("Failed to fetch search results: HTTP {}, Error: {}", resp.status(), resp.text().unwrap())
                 }
             }
             Err(e) => format!("Failed to make the request: {}", e),
@@ -357,6 +373,6 @@ mod tests {
     fn test_visit_website_tool() {
         let tool = VisitWebsiteTool::new();
         let url = "https://www.rust-lang.org/";
-        let _result = tool.forward(HashMap::from([("url".to_string(), url.to_string())]));
+        let _result = tool.forward(&url);
     }
 }
