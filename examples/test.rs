@@ -1,8 +1,7 @@
-
 use log::{self, info, Record, Level, Metadata};
-use smolagents::agents:: MultiStepAgent;
+use smolagents::agents::MultiStepAgent;
 use smolagents::models::OpenAIServerModel;
-use smolagents::tools::VisitWebsiteTool;
+use smolagents::tools::{GoogleSearchTool, VisitWebsiteTool};
 use colored::*;
 use std::io::Write;
 
@@ -16,10 +15,26 @@ impl log::Log for ColoredLogger {
     fn log(&self, record: &Record) {
         if self.enabled(record.metadata()) {
             let mut stdout = std::io::stdout();
-            if record.level() == Level::Info {
-                writeln!(stdout, "{}", record.args().to_string().blue()).unwrap();
+            let msg = record.args().to_string();
+            
+            // Add a newline before each message for spacing
+            writeln!(stdout).unwrap();
+
+            // Check for specific prefixes and apply different colors
+            if msg.starts_with("Observation:") {
+                let (prefix, content) = msg.split_at(12);
+                writeln!(stdout, "{}{}", prefix.yellow().bold(), content.green()).unwrap();
+            } else if msg.starts_with("Executing tool call:") {
+                let (prefix, content) = msg.split_at(21);
+                writeln!(stdout, "{}{}", prefix.magenta().bold(), content.cyan()).unwrap();
+            } else if msg.starts_with("Plan:") {
+                let (prefix, content) = msg.split_at(5);
+                writeln!(stdout, "{}{}", prefix.red().bold(), content.blue().italic()).unwrap();
+            } else if msg.starts_with("Final answer:") {
+                let (prefix, content) = msg.split_at(13);
+                writeln!(stdout, "\n{}{}\n", prefix.green().bold(), content.white().bold()).unwrap();
             } else {
-                writeln!(stdout, "{}", record.args()).unwrap();
+                writeln!(stdout, "{}", msg.blue()).unwrap();
             }
         }
     }
@@ -37,7 +52,7 @@ fn main() {
 
     let mut agent = MultiStepAgent::new(
         OpenAIServerModel::new(None, None, None),
-        vec![VisitWebsiteTool::new()],
+        vec![GoogleSearchTool::new(None), VisitWebsiteTool::new()],
         None,
         None,
         Some("multistep_agent"),
@@ -45,5 +60,5 @@ fn main() {
     )
     .unwrap();
 
-    println!("{}", agent.run("Who is akshay ballal? visit https://www.akshaymakes.com/", false, true).unwrap());
+    agent.run("Whats the weather in Eindhoven?", false, true).unwrap();
 }

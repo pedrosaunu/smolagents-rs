@@ -2,7 +2,7 @@ use crate::errors::AgentError;
 use crate::models::Message;
 use crate::models::{MessageRole, Model, ModelResponse};
 use crate::prompts::{
-    user_prompt_plan, FUNCTION_CALLING_SYSTEM_PROMPT, SYSTEM_PROMPT_FACTS, SYSTEM_PROMPT_PLAN, TOOL_CALLING_SYSTEM_PROMPT
+    user_prompt_plan, FUNCTION_CALLING_SYSTEM_PROMPT, SYSTEM_PROMPT_FACTS, SYSTEM_PROMPT_PLAN
 };
 use crate::tools::{FinalAnswerTool, Tool};
 use std::collections::HashMap;
@@ -121,7 +121,7 @@ impl<M: Model + Debug> Agent for MultiStepAgent<M> {
                     .clone();
                 match tool_name.as_str() {
                     "final_answer" => {
-                        info!("Final answer tool call: {}", tool_name);
+                        info!("Executing tool call: {}", tool_name);
                         let answer = self.execute_tool_call(&tool_name, tool_args);
                         return Ok(Some(answer.unwrap()));
                     }
@@ -135,6 +135,7 @@ impl<M: Model + Debug> Agent for MultiStepAgent<M> {
                         info!("Executing tool call: {} with arguments: {:?}", tool_name, tool_args);
                         let observation = self.execute_tool_call(&tool_name, tool_args).unwrap();
                         step_log.observations = Some(observation.clone());
+                        info!("Observation: {}", observation);
                         return Ok(None);
                     }
                 }
@@ -158,12 +159,12 @@ impl<M: Model + Debug> MultiStepAgent<M> {
         max_steps: Option<usize>,
     ) -> Result<Self> {
         let name = "MultiStepAgent";
+
         let system_prompt_template = match system_prompt {
+  
             Some(prompt) => prompt.to_string(),
             None => {
-                // let tool_refs: Vec<&Box<dyn Tool>> = tools.iter().collect();
-                // format_prompt_with_tools(&tool_refs, TOOL_CALLING_SYSTEM_PROMPT)
-                TOOL_CALLING_SYSTEM_PROMPT.to_string()
+                FUNCTION_CALLING_SYSTEM_PROMPT.to_string()
             }
         };
         let description = match description {
@@ -361,8 +362,8 @@ impl<M: Model + Debug> MultiStepAgent<M> {
             });
             final_answer = self.step(&mut step_log)?;
             self.logs.push(step_log);
-            // println!("Final answer: {:?}", final_answer);
         }
+        info!("Final answer: {}", final_answer.clone().unwrap_or("Could not find answer".to_string()));
         Ok(final_answer.unwrap())
     }
 

@@ -90,17 +90,14 @@ impl Model for OpenAIServerModel {
             "temperature": self.temperature,
             "tools": tools,
             "max_tokens": max_tokens,
-            "tool_choice": "auto"
+            "tool_choice": "required"
         });
 
-        match args {
-            Some(args) => {
-                let mut body = body.as_object().unwrap().clone();
-                for (key, value) in args {
-                    body.insert(key, json!(value));
-                }
-            },
-            None => {}
+        if let Some(args) = args {
+            let mut body = body.as_object().unwrap().clone();
+            for (key, value) in args {
+                body.insert(key, json!(value));
+            }
         }
 
 

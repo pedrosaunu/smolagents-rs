@@ -331,9 +331,6 @@ Now Begin! If you solve the task correctly and call the final_answer tool to giv
 pub const FUNCTION_CALLING_SYSTEM_PROMPT: &str = r#"You are an expert assistant who can solve any task using  tool calls. You will be given a task to solve as best you can.
 To do so, you have been given access to the following tools: {{tool_names}}
 
-The tool call you write is an action: after the tool is executed, you will get the result of the tool call as an "observation".
-This Action/Observation can repeat N times, you should take several steps when needed.
-
 {{tool_descriptions}}
 
 {{managed_agents_descriptions}}
