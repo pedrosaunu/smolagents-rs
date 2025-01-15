@@ -1,11 +1,41 @@
-use std::collections::HashMap;
 
-use smolagents::agents::{get_tool_description_with_args, Agent, MultiStepAgent};
+use log::{self, info, Record, Level, Metadata};
+use smolagents::agents:: MultiStepAgent;
 use smolagents::models::OpenAIServerModel;
 use smolagents::tools::VisitWebsiteTool;
+use colored::*;
+use std::io::Write;
+
+struct ColoredLogger;
+
+impl log::Log for ColoredLogger {
+    fn enabled(&self, metadata: &Metadata) -> bool {
+        metadata.level() <= Level::Info
+    }
+
+    fn log(&self, record: &Record) {
+        if self.enabled(record.metadata()) {
+            let mut stdout = std::io::stdout();
+            if record.level() == Level::Info {
+                writeln!(stdout, "{}", record.args().to_string().blue()).unwrap();
+            } else {
+                writeln!(stdout, "{}", record.args()).unwrap();
+            }
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+static LOGGER: ColoredLogger = ColoredLogger;
+
 fn main() {
-    
-    let agent = MultiStepAgent::new(
+    log::set_logger(&LOGGER).unwrap();
+    log::set_max_level(log::LevelFilter::Info);
+
+    info!("Starting agent");
+
+    let mut agent = MultiStepAgent::new(
         OpenAIServerModel::new(None, None, None),
         vec![VisitWebsiteTool::new()],
         None,
@@ -15,24 +45,5 @@ fn main() {
     )
     .unwrap();
 
-    // let agent2 = MultiStepAgent::new(
-    //     vec![VisitWebsiteTool::new()],
-    //     None,
-    //     Some(HashMap::from([(
-    //         "agent".to_string(),
-    //         Box::new(agentic) as Box<dyn Agent>,
-    //     )])),
-    //     None,
-    // )
-    // .unwrap();
-    // println!("{}", agent2.system_prompt_template);
-    println!(
-        "{:?}",
-        agent
-            .execute_tool_call(
-                "visit_website",
-                HashMap::from([("url".to_string(), "https://www.akshaymakes.com/".to_string())])
-            )
-            .unwrap()
-    );
+    println!("{}", agent.run("Who is akshay ballal? visit https://www.akshaymakes.com/", false, true).unwrap());
 }
