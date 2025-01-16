@@ -1,6 +1,7 @@
 use crate::errors::AgentError;
-use crate::models::Message;
-use crate::models::{MessageRole, Model, ModelResponse};
+use crate::models::model_traits::{Model, ModelResponse};
+use crate::models::types::Message;
+use crate::models::types::MessageRole;
 use crate::prompts::{
     user_prompt_plan, FUNCTION_CALLING_SYSTEM_PROMPT, SYSTEM_PROMPT_FACTS, SYSTEM_PROMPT_PLAN,
 };
@@ -95,7 +96,7 @@ impl<M: Model + Debug> Agent for MultiStepAgent<M> {
                         tools,
                         None,
                         Some(HashMap::from([(
-                            "stop_sequences".to_string(),
+                            "stop".to_string(),
                             vec!["Observation:".to_string()],
                         )])),
                     )
@@ -371,76 +372,76 @@ impl<M: Model + Debug> MultiStepAgent<M> {
         if is_first_step {
             let message_prompt_facts = Message {
                 role: MessageRole::System,
-                    content: SYSTEM_PROMPT_FACTS.to_string(),
-                };
-                let message_prompt_task = Message {
-                    role: MessageRole::User,
-                    content: format!(
-                        "Here is the task: ```
+                content: SYSTEM_PROMPT_FACTS.to_string(),
+            };
+            let message_prompt_task = Message {
+                role: MessageRole::User,
+                content: format!(
+                    "Here is the task: ```
                     {}
                     ```
                     Now Begin!
                     ",
-                        task
-                    ),
-                };
+                    task
+                ),
+            };
 
-                let answer_facts = self
-                    .model
-                    .run(
-                        vec![message_prompt_facts, message_prompt_task],
-                        vec![],
-                        None,
-                        None,
-                    )
-                    .unwrap()
-                    .get_response()
-                    .unwrap_or("".to_string());
-                let message_system_prompt_plan = Message {
-                    role: MessageRole::System,
-                    content: SYSTEM_PROMPT_PLAN.to_string(),
-                };
-                let tool_descriptions = get_tool_descriptions(
-                    self.tools
-                        .values()
-                        .map(|tool| Box::new(&**tool))
-                        .collect::<Vec<Box<&dyn Tool>>>(),
+            let answer_facts = self
+                .model
+                .run(
+                    vec![message_prompt_facts, message_prompt_task],
+                    vec![],
+                    None,
+                    None,
                 )
-                .join("\n");
-                let message_user_prompt_plan = Message {
-                    role: MessageRole::User,
-                    content: user_prompt_plan(
-                        task,
-                        &tool_descriptions,
-                        &show_agents_description(
-                            self.managed_agents.as_ref().unwrap_or(&HashMap::new()),
-                        ),
-                        &answer_facts,
+                .unwrap()
+                .get_response()
+                .unwrap_or("".to_string());
+            let message_system_prompt_plan = Message {
+                role: MessageRole::System,
+                content: SYSTEM_PROMPT_PLAN.to_string(),
+            };
+            let tool_descriptions = get_tool_descriptions(
+                self.tools
+                    .values()
+                    .map(|tool| Box::new(&**tool))
+                    .collect::<Vec<Box<&dyn Tool>>>(),
+            )
+            .join("\n");
+            let message_user_prompt_plan = Message {
+                role: MessageRole::User,
+                content: user_prompt_plan(
+                    task,
+                    &tool_descriptions,
+                    &show_agents_description(
+                        self.managed_agents.as_ref().unwrap_or(&HashMap::new()),
                     ),
-                };
-                let answer_plan = self
-                    .model
-                    .run(
-                        vec![message_system_prompt_plan, message_user_prompt_plan],
-                        vec![],
-                        None,
-                        Some(HashMap::from([(
-                            "stop_sequences".to_string(),
-                            vec!["Observation:".to_string()],
-                        )])),
-                    )
-                    .unwrap()
-                    .get_response()
-                    .unwrap();
-                let final_plan_redaction = format!(
-                    "Here is the plan of action that I will follow for the task: \n{}",
-                    answer_plan
-                );
-                let final_facts_redaction =
-                    format!("Here are the facts that I know so far: \n{}", answer_facts);
-                self.logs.push(Step::PlanningStep(
-                    final_plan_redaction.clone(),
-                    final_facts_redaction,
+                    &answer_facts,
+                ),
+            };
+            let answer_plan = self
+                .model
+                .run(
+                    vec![message_system_prompt_plan, message_user_prompt_plan],
+                    vec![],
+                    None,
+                    Some(HashMap::from([(
+                        "stop_sequences".to_string(),
+                        vec!["Observation:".to_string()],
+                    )])),
+                )
+                .unwrap()
+                .get_response()
+                .unwrap();
+            let final_plan_redaction = format!(
+                "Here is the plan of action that I will follow for the task: \n{}",
+                answer_plan
+            );
+            let final_facts_redaction =
+                format!("Here are the facts that I know so far: \n{}", answer_facts);
+            self.logs.push(Step::PlanningStep(
+                final_plan_redaction.clone(),
+                final_facts_redaction,
             ));
             info!("Plan: {}", final_plan_redaction.blue().bold());
         }
@@ -476,10 +477,7 @@ pub fn get_tool_descriptions(tools: Vec<Box<&dyn Tool>>) -> Vec<String> {
         .map(|tool| get_tool_description_with_args(&**tool))
         .collect()
 }
-pub fn format_prompt_with_tools(
-    tools: Vec<Box<&dyn Tool>>,
-    prompt_template: &str,
-) -> String {
+pub fn format_prompt_with_tools(tools: Vec<Box<&dyn Tool>>, prompt_template: &str) -> String {
     let tool_descriptions = get_tool_descriptions(tools.clone());
     let mut prompt = prompt_template.to_string();
     prompt = prompt.replace("{{tool_descriptions}}", &tool_descriptions.join("\n"));

@@ -1,6 +1,6 @@
 use log::{self, info, Record, Level, Metadata};
 use smolagents::agents::MultiStepAgent;
-use smolagents::models::OpenAIServerModel;
+use smolagents::models::openai::OpenAIServerModel;
 use smolagents::tools::{GoogleSearchTool, VisitWebsiteTool};
 use colored::*;
 use std::io::Write;
