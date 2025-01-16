@@ -1,11 +1,12 @@
 use anyhow::Result;
 use htmd::HtmlToMarkdown;
+use reqwest::Url;
+use scraper::Selector;
 use serde::Serialize;
 use serde_json::json;
 use std::any::Any;
 use std::collections::HashMap;
 use std::fmt::Debug;
-
 pub trait Tool: Debug {
     fn name(&self) -> &'static str;
     fn description(&self) -> &'static str;
@@ -13,6 +14,37 @@ pub trait Tool: Debug {
     fn output_type(&self) -> &'static str;
     fn is_initialized(&self) -> bool;
     fn forward(&self, arguments: HashMap<String, String>) -> Result<Box<dyn Any>>;
+}
+
+pub fn get_json_schema(tool: &dyn Tool) -> serde_json::Value {
+    let mut properties = HashMap::new();
+    for (key, value) in tool.inputs().iter() {
+        // Create a new HashMap without the 'required' field
+        let mut clean_value = HashMap::new();
+        clean_value.insert("type", value.get("type").unwrap().clone());
+        clean_value.insert("description", value.get("description").unwrap().clone());
+        properties.insert(*key, clean_value);
+    }
+
+    let required: Vec<String> = tool
+        .inputs()
+        .iter()
+        .filter(|(_, value)| value.get("required").unwrap() == "true")
+        .map(|(key, _)| (*key).to_string())
+        .collect();
+
+    json!({
+        "type": "function",
+        "function": {
+            "name": tool.name(),
+            "description": tool.description(),
+            "parameters": {
+                "type": "object",
+                "properties": properties,
+                "required": required
+            },
+        }
+    })
 }
 
 #[derive(Debug, Serialize)]
@@ -130,37 +162,6 @@ impl Tool for VisitWebsiteTool {
         let url = arguments.get("url").unwrap();
         Ok(Box::new(self.forward(url)))
     }
-}
-
-pub fn get_json_schema(tool: &dyn Tool) -> serde_json::Value {
-    let mut properties = HashMap::new();
-    for (key, value) in tool.inputs().iter() {
-        // Create a new HashMap without the 'required' field
-        let mut clean_value = HashMap::new();
-        clean_value.insert("type", value.get("type").unwrap().clone());
-        clean_value.insert("description", value.get("description").unwrap().clone());
-        properties.insert(*key, clean_value);
-    }
-
-    let required: Vec<String> = tool
-        .inputs()
-        .iter()
-        .filter(|(_, value)| value.get("required").unwrap() == "true")
-        .map(|(key, _)| (*key).to_string())
-        .collect();
-
-    json!({
-        "type": "function",
-        "function": {
-            "name": tool.name(),
-            "description": tool.description(),
-            "parameters": {
-                "type": "object",
-                "properties": properties,
-                "required": required
-            },
-        }
-    })
 }
 
 #[derive(Debug, Serialize)]
@@ -368,6 +369,117 @@ impl Tool for GoogleSearchTool {
     }
 }
 
+#[derive(Debug, Serialize)]
+pub struct SearchResult {
+    pub title: String,
+    pub snippet: String,
+    pub url: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DuckDuckGoSearchTool {
+    pub tool: BaseTool,
+}
+
+impl DuckDuckGoSearchTool {
+    pub fn new() -> Self {
+        DuckDuckGoSearchTool {
+            tool: BaseTool {
+                name: "duckduckgo_search",
+                description: "Performs a duckduckgo web search for your query then returns a string of the top search results.",
+                inputs: HashMap::from([
+                    ("query", HashMap::from([
+                        ("type", "string".to_string()),
+                        ("description", "The query to search for".to_string()),
+                        ("required", "true".to_string()),
+                    ])),
+                ]),
+                output_type: "string",
+                is_initialized: false,
+            },
+        }
+    }
+
+    pub fn forward(&self, query: &str) -> Result<Vec<SearchResult>> {
+        let client = reqwest::blocking::Client::builder()
+            .user_agent("Mozilla/5.0 (compatible; MyRustTool/1.0)")
+            .build()?;
+        let response = client
+            .get(format!("https://html.duckduckgo.com/html/?q={}", query))
+            .send()?;
+        let html = response.text().unwrap();
+        let document = scraper::Html::parse_document(&html);
+        let result_selector = Selector::parse(".result")
+            .map_err(|e| anyhow::anyhow!("Failed to parse result selector: {}", e))?;
+        let title_selector = Selector::parse(".result__title a")
+            .map_err(|e| anyhow::anyhow!("Failed to parse title selector: {}", e))?;
+        let snippet_selector = Selector::parse(".result__snippet")
+            .map_err(|e| anyhow::anyhow!("Failed to parse snippet selector: {}", e))?;
+        let mut results = Vec::new();
+
+        for result in document.select(&result_selector) {
+            let title_element = result.select(&title_selector).next();
+            let snippet_element = result.select(&snippet_selector).next();
+            if let (Some(title), Some(snippet)) = (title_element, snippet_element) {
+                let title_text = title.text().collect::<String>().trim().to_string();
+                let snippet_text = snippet.text().collect::<String>().trim().to_string();
+                let url = title
+                    .value()
+                    .attr("href")
+                    .and_then(|href| {
+                        // Parse and clean the URL
+                        if href.starts_with("//") {
+                            // Handle protocol-relative URLs
+                            Some(format!("https:{}", href))
+                        } else if href.starts_with('/') {
+                            // Handle relative URLs
+                            Some(format!("https://duckduckgo.com{}", href))
+                        } else if let Ok(parsed_url) = Url::parse(href) {
+                            // Handle absolute URLs
+                            Some(parsed_url.to_string())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or_default();
+                if !title_text.is_empty() && !url.is_empty() {
+                    results.push(SearchResult {
+                        title: title_text,
+                        snippet: snippet_text,
+                        url,
+                    });
+                }
+            }
+        }
+        Ok(results)
+    }
+}
+
+impl Tool for DuckDuckGoSearchTool {
+    fn name(&self) -> &'static str {
+        self.tool.name()
+    }
+    fn description(&self) -> &'static str {
+        self.tool.description()
+    }
+    fn inputs(&self) -> &HashMap<&'static str, HashMap<&'static str, String>> {
+        self.tool.inputs()
+    }
+    fn output_type(&self) -> &'static str {
+        self.tool.output_type()
+    }
+    fn is_initialized(&self) -> bool {
+        self.tool.is_initialized()
+    }
+    fn forward(&self, arguments: HashMap<String, String>) -> Result<Box<dyn Any>> {
+        let query = arguments.get("query").unwrap();
+        let results = self.forward(query)?;
+        let json_string = serde_json::to_string_pretty(&results)?;
+        println!("{}", json_string);
+        Ok(Box::new(json_string))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -377,5 +489,29 @@ mod tests {
         let tool = VisitWebsiteTool::new();
         let url = "https://www.rust-lang.org/";
         let _result = tool.forward(&url);
+    }
+
+    #[test]
+    fn test_final_answer_tool() {
+        let tool = FinalAnswerTool::new();
+        let arguments = HashMap::from([("answer".to_string(), "The answer is 42".to_string())]);
+        let result = tool.forward(arguments).unwrap();
+        assert_eq!(result.downcast_ref::<String>().unwrap(), "The answer is 42");
+    }
+
+    #[test]
+    fn test_google_search_tool() {
+        let tool = GoogleSearchTool::new(None);
+        let query = "What is the capital of France?";
+        let result = tool.forward(query, None);
+        assert!(result.contains("Paris"));
+    }
+
+    #[test]
+    fn test_duckduckgo_search_tool() {
+        let tool = DuckDuckGoSearchTool::new();
+        let query = "What is the capital of France?";
+        let result = tool.forward(query).unwrap();
+        assert!(result.iter().any(|r| r.snippet.contains("Paris")));
     }
 }

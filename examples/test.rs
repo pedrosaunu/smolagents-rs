@@ -2,7 +2,7 @@ use colored::*;
 use log::{self, info, Level, Metadata, Record};
 use smolagents::agents::{Agent, FunctionCallingAgent};
 use smolagents::models::openai::OpenAIServerModel;
-use smolagents::tools::{GoogleSearchTool, VisitWebsiteTool};
+use smolagents::tools::{DuckDuckGoSearchTool, GoogleSearchTool, VisitWebsiteTool};
 use std::io::Write;
 
 struct ColoredLogger;
@@ -59,7 +59,7 @@ fn main() {
     let mut agent = FunctionCallingAgent::new(
         OpenAIServerModel::new(None, None, None),
         vec![
-            Box::new(GoogleSearchTool::new(None)),
+            Box::new(DuckDuckGoSearchTool::new()),
             Box::new(VisitWebsiteTool::new()),
         ],
         None,
