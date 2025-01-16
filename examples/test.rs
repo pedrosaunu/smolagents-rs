@@ -1,5 +1,5 @@
 use log::{self, info, Record, Level, Metadata};
-use smolagents::agents::MultiStepAgent;
+use smolagents::agents::{Agent, FunctionCallingAgent};
 use smolagents::models::openai::OpenAIServerModel;
 use smolagents::tools::{GoogleSearchTool, VisitWebsiteTool};
 use colored::*;
@@ -50,7 +50,7 @@ fn main() {
 
     info!("Starting agent");
 
-    let mut agent = MultiStepAgent::new(
+    let mut agent = FunctionCallingAgent::new(
         OpenAIServerModel::new(None, None, None),
         vec![Box::new(GoogleSearchTool::new(None)), Box::new(VisitWebsiteTool::new())],
         None,
