@@ -1,8 +1,8 @@
-use log::{self, info, Record, Level, Metadata};
+use colored::*;
+use log::{self, info, Level, Metadata, Record};
 use smolagents::agents::{Agent, FunctionCallingAgent};
 use smolagents::models::openai::OpenAIServerModel;
 use smolagents::tools::{GoogleSearchTool, VisitWebsiteTool};
-use colored::*;
 use std::io::Write;
 
 struct ColoredLogger;
@@ -16,7 +16,7 @@ impl log::Log for ColoredLogger {
         if self.enabled(record.metadata()) {
             let mut stdout = std::io::stdout();
             let msg = record.args().to_string();
-            
+
             // Add a newline before each message for spacing
             writeln!(stdout).unwrap();
 
@@ -32,7 +32,13 @@ impl log::Log for ColoredLogger {
                 writeln!(stdout, "{}{}", prefix.red().bold(), content.blue().italic()).unwrap();
             } else if msg.starts_with("Final answer:") {
                 let (prefix, content) = msg.split_at(13);
-                writeln!(stdout, "\n{}{}\n", prefix.green().bold(), content.white().bold()).unwrap();
+                writeln!(
+                    stdout,
+                    "\n{}{}\n",
+                    prefix.green().bold(),
+                    content.white().bold()
+                )
+                .unwrap();
             } else {
                 writeln!(stdout, "{}", msg.blue()).unwrap();
             }
@@ -52,7 +58,10 @@ fn main() {
 
     let mut agent = FunctionCallingAgent::new(
         OpenAIServerModel::new(None, None, None),
-        vec![Box::new(GoogleSearchTool::new(None)), Box::new(VisitWebsiteTool::new())],
+        vec![
+            Box::new(GoogleSearchTool::new(None)),
+            Box::new(VisitWebsiteTool::new()),
+        ],
         None,
         None,
         Some("multistep_agent"),
@@ -60,5 +69,7 @@ fn main() {
     )
     .unwrap();
 
-    agent.run("Whats the weather in Eindhoven?", false, true).unwrap();
+    agent
+        .run("Whats the weather in Eindhoven?", false, true)
+        .unwrap();
 }

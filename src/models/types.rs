@@ -1,6 +1,5 @@
-use std::fmt::Debug;
 use serde::{Deserialize, Serialize};
-
+use std::fmt::Debug;
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy)]
 #[serde(rename_all = "lowercase")]
@@ -19,5 +18,3 @@ pub struct Message {
     pub role: MessageRole,
     pub content: String,
 }
-
-

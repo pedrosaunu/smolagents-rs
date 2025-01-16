@@ -19,6 +19,81 @@ const DEFAULT_TOOL_DESCRIPTION_TEMPLATE: &str = r#"
 
 use std::fmt::Debug;
 
+pub fn get_tool_description_with_args(tool: &dyn Tool) -> String {
+    let mut description = DEFAULT_TOOL_DESCRIPTION_TEMPLATE.to_string();
+    description = description.replace("{{ tool.name }}", tool.name());
+    description = description.replace("{{ tool.description }}", tool.description());
+
+    let inputs_description: Vec<String> = tool
+        .inputs()
+        .iter()
+        .map(|(key, value)| {
+            let type_desc = value.get("type").unwrap();
+            let desc = value.get("description").unwrap();
+            // .downcast_ref::<&str>()
+            // .unwrap();
+            format!("{} ({}): {}", key, type_desc, desc)
+        })
+        .collect();
+
+    description = description.replace("{{tool.inputs}}", &inputs_description.join(", "));
+    description = description.replace("{{tool.output_type}}", tool.output_type());
+
+    description
+}
+
+pub fn get_tool_descriptions(tools: Vec<Box<&dyn Tool>>) -> Vec<String> {
+    tools
+        .into_iter()
+        .map(|tool| get_tool_description_with_args(&**tool))
+        .collect()
+}
+pub fn format_prompt_with_tools(tools: Vec<Box<&dyn Tool>>, prompt_template: &str) -> String {
+    let tool_descriptions = get_tool_descriptions(tools.clone());
+    let mut prompt = prompt_template.to_string();
+    prompt = prompt.replace("{{tool_descriptions}}", &tool_descriptions.join("\n"));
+    if prompt.contains("{{tool_names}}") {
+        let tool_names: Vec<String> = tools.iter().map(|tool| tool.name().to_string()).collect();
+        prompt = prompt.replace("{{tool_names}}", &tool_names.join(", "));
+    }
+    prompt
+}
+
+pub fn show_agents_description(managed_agents: &HashMap<String, Box<dyn Agent>>) -> String {
+    let mut managed_agent_description = r#"You can also give requests to team members.
+Calling a team member works the same as for calling a tool: simply, the only argument you can give in the call is 'request', a long string explaining your request.
+Given that this team member is a real human, you should be very verbose in your request.
+Here is a list of the team members that you can call:"#.to_string();
+
+    for (name, agent) in managed_agents.iter() {
+        managed_agent_description.push_str(&format!("{}: {:?}\n", name, agent.description()));
+    }
+
+    managed_agent_description
+}
+
+pub fn format_prompt_with_managed_agent_description(
+    prompt_template: String,
+    managed_agents: &HashMap<String, Box<dyn Agent>>,
+    agent_descriptions_placeholder: Option<&str>,
+) -> Result<String> {
+    let agent_descriptions_placeholder =
+        agent_descriptions_placeholder.unwrap_or("{{managed_agents_descriptions}}");
+
+    if !prompt_template.contains(agent_descriptions_placeholder) {
+        return Err(E::msg("The prompt template does not contain the placeholder for the managed agents descriptions"));
+    }
+
+    if managed_agents.keys().len() > 0 {
+        Ok(prompt_template.replace(
+            agent_descriptions_placeholder,
+            &show_agents_description(managed_agents),
+        ))
+    } else {
+        Ok(prompt_template.replace(agent_descriptions_placeholder, ""))
+    }
+}
+
 pub trait Agent: Debug {
     fn name(&self) -> &'static str;
     fn get_max_steps(&self) -> usize;
@@ -47,7 +122,12 @@ pub trait Agent: Debug {
             self.get_logs_mut().push(step_log);
             self.increment_step_number();
         }
-
+        info!(
+            "Final answer: {}",
+            final_answer
+                .clone()
+                .unwrap_or("Could not find answer".to_string())
+        );
         Ok(final_answer.unwrap_or_else(|| "Max steps reached without final answer".to_string()))
     }
     fn stream_run(&mut self, _task: &str) -> Result<String> {
@@ -321,8 +401,6 @@ impl<M: Model + Debug> MultiStepAgent<M> {
         Ok(output_str.clone())
     }
 
-
-
     pub fn planning_step(&mut self, task: &str, is_first_step: bool, _step: usize) {
         if is_first_step {
             let message_prompt_facts = Message {
@@ -531,80 +609,5 @@ impl<M: Model + Debug> Agent for FunctionCallingAgent<M> {
                 todo!()
             }
         }
-    }
-}
-
-pub fn get_tool_description_with_args(tool: &dyn Tool) -> String {
-    let mut description = DEFAULT_TOOL_DESCRIPTION_TEMPLATE.to_string();
-    description = description.replace("{{ tool.name }}", tool.name());
-    description = description.replace("{{ tool.description }}", tool.description());
-
-    let inputs_description: Vec<String> = tool
-        .inputs()
-        .iter()
-        .map(|(key, value)| {
-            let type_desc = value.get("type").unwrap();
-            let desc = value.get("description").unwrap();
-            // .downcast_ref::<&str>()
-            // .unwrap();
-            format!("{} ({}): {}", key, type_desc, desc)
-        })
-        .collect();
-
-    description = description.replace("{{tool.inputs}}", &inputs_description.join(", "));
-    description = description.replace("{{tool.output_type}}", tool.output_type());
-
-    description
-}
-
-pub fn get_tool_descriptions(tools: Vec<Box<&dyn Tool>>) -> Vec<String> {
-    tools
-        .into_iter()
-        .map(|tool| get_tool_description_with_args(&**tool))
-        .collect()
-}
-pub fn format_prompt_with_tools(tools: Vec<Box<&dyn Tool>>, prompt_template: &str) -> String {
-    let tool_descriptions = get_tool_descriptions(tools.clone());
-    let mut prompt = prompt_template.to_string();
-    prompt = prompt.replace("{{tool_descriptions}}", &tool_descriptions.join("\n"));
-    if prompt.contains("{{tool_names}}") {
-        let tool_names: Vec<String> = tools.iter().map(|tool| tool.name().to_string()).collect();
-        prompt = prompt.replace("{{tool_names}}", &tool_names.join(", "));
-    }
-    prompt
-}
-
-pub fn show_agents_description(managed_agents: &HashMap<String, Box<dyn Agent>>) -> String {
-    let mut managed_agent_description = r#"You can also give requests to team members.
-Calling a team member works the same as for calling a tool: simply, the only argument you can give in the call is 'request', a long string explaining your request.
-Given that this team member is a real human, you should be very verbose in your request.
-Here is a list of the team members that you can call:"#.to_string();
-
-    for (name, agent) in managed_agents.iter() {
-        managed_agent_description.push_str(&format!("{}: {:?}\n", name, agent.description()));
-    }
-
-    managed_agent_description
-}
-
-pub fn format_prompt_with_managed_agent_description(
-    prompt_template: String,
-    managed_agents: &HashMap<String, Box<dyn Agent>>,
-    agent_descriptions_placeholder: Option<&str>,
-) -> Result<String> {
-    let agent_descriptions_placeholder =
-        agent_descriptions_placeholder.unwrap_or("{{managed_agents_descriptions}}");
-
-    if !prompt_template.contains(agent_descriptions_placeholder) {
-        return Err(E::msg("The prompt template does not contain the placeholder for the managed agents descriptions"));
-    }
-
-    if managed_agents.keys().len() > 0 {
-        Ok(prompt_template.replace(
-            agent_descriptions_placeholder,
-            &show_agents_description(managed_agents),
-        ))
-    } else {
-        Ok(prompt_template.replace(agent_descriptions_placeholder, ""))
     }
 }

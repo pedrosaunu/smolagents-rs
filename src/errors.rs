@@ -8,7 +8,7 @@ pub enum AgentError {
 
 impl std::error::Error for AgentError {}
 
-impl AgentError{
+impl AgentError {
     pub fn message(&self) -> &str {
         match self {
             Self::Parsing(msg) => msg,
@@ -27,10 +27,9 @@ impl std::fmt::Display for AgentError {
             Self::Generation(msg) => write!(f, "{}", msg),
         }
     }
-
 }
 
 pub type AgentParsingError = AgentError;
 pub type AgentExecutionError = AgentError;
 pub type AgentMaxStepsError = AgentError;
-pub type AgentGenerationError = AgentError; 
+pub type AgentGenerationError = AgentError;

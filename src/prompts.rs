@@ -327,7 +327,6 @@ If no tool call is needed, use final_answer tool to return your answer.
 Now Begin! If you solve the task correctly and call the final_answer tool to give your answer, you will receive a reward of $1,000,000.
 "#;
 
-
 pub const FUNCTION_CALLING_SYSTEM_PROMPT: &str = r#"You are an expert assistant who can solve any task using  tool calls. You will be given a task to solve as best you can.
 To do so, you have been given access to the following tools: {{tool_names}}
 

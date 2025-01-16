@@ -163,7 +163,6 @@ pub fn get_json_schema(tool: &dyn Tool) -> serde_json::Value {
     })
 }
 
-
 #[derive(Debug, Serialize)]
 pub struct FinalAnswerTool {
     pub tool: BaseTool,
@@ -330,7 +329,11 @@ impl GoogleSearchTool {
 
                     format!("## Search Results\n{}", web_snippets.join("\n\n"))
                 } else {
-                    format!("Failed to fetch search results: HTTP {}, Error: {}", resp.status(), resp.text().unwrap())
+                    format!(
+                        "Failed to fetch search results: HTTP {}, Error: {}",
+                        resp.status(),
+                        resp.text().unwrap()
+                    )
                 }
             }
             Err(e) => format!("Failed to make the request: {}", e),

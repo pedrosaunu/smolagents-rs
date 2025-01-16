@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 
+use crate::errors::AgentError;
+use crate::models::model_traits::{Model, ModelResponse};
+use crate::models::types::{Message, MessageRole};
+use crate::tools::{get_json_schema, Tool};
+use anyhow::Result;
 use reqwest::blocking::Client;
 use serde::Deserialize;
-use anyhow::Result;
 use serde_json::json;
-use crate::errors::AgentError;
-use crate::models::types::{Message, MessageRole};
-use crate::models::model_traits::{Model, ModelResponse};
-use crate::tools::{get_json_schema, Tool};
 #[derive(Debug, Deserialize)]
 pub struct OpenAIResponse {
     pub choices: Vec<Choice>,
@@ -48,11 +48,26 @@ impl FunctionCall {
 
 impl ModelResponse for OpenAIResponse {
     fn get_response(&self) -> Result<String> {
-        Ok(self.choices.first().unwrap().message.content.clone().unwrap_or_default())
+        Ok(self
+            .choices
+            .first()
+            .unwrap()
+            .message
+            .content
+            .clone()
+            .unwrap_or_default())
     }
 
     fn get_tools_used(&self) -> Result<Vec<ToolCall>> {
-        Ok(self.choices.first().unwrap().message.tool_calls.as_ref().unwrap_or(&vec![]).clone())
+        Ok(self
+            .choices
+            .first()
+            .unwrap()
+            .message
+            .tool_calls
+            .as_ref()
+            .unwrap_or(&vec![])
+            .clone())
     }
 }
 
@@ -127,7 +142,9 @@ impl Model for OpenAIServerModel {
             .header("Authorization", format!("Bearer {}", self.api_key))
             .json(&body)
             .send()
-            .map_err(|e| AgentError::Generation(format!("Failed to get response from OpenAI: {}", e)))?;
+            .map_err(|e| {
+                AgentError::Generation(format!("Failed to get response from OpenAI: {}", e))
+            })?;
 
         match response.status() {
             reqwest::StatusCode::OK => Ok(response.json::<OpenAIResponse>().unwrap()),
