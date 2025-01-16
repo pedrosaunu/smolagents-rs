@@ -110,11 +110,12 @@ impl VisitWebsiteTool {
     }
 
     pub fn forward(&self, url: &str) -> String {
-        let client = reqwest::blocking::Client::new();
-        let response = client
-            .get(url)
-            .header("User-Agent", "Mozilla/5.0 (compatible; MyRustTool/1.0)")
-            .send();
+        let client = reqwest::blocking::Client::builder()
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+            .build()
+            .unwrap_or_else(|_| reqwest::blocking::Client::new());
+
+        let response = client.get(url).send();
 
         match response {
             Ok(resp) => {
@@ -128,8 +129,14 @@ impl VisitWebsiteTool {
                         }
                         Err(_) => "Failed to read response text".to_string(),
                     }
+                } else if resp.status().as_u16() == 999 {
+                    "The website appears to be blocking automated access. Try visiting the URL directly in your browser.".to_string()
                 } else {
-                    format!("Failed to fetch the webpage: HTTP {}", resp.status())
+                    format!(
+                        "Failed to fetch the webpage: HTTP {} - {}",
+                        resp.status(),
+                        resp.status().canonical_reason().unwrap_or("Unknown Error")
+                    )
                 }
             }
             Err(e) => format!("Failed to make the request: {}", e),
@@ -475,7 +482,6 @@ impl Tool for DuckDuckGoSearchTool {
         let query = arguments.get("query").unwrap();
         let results = self.forward(query)?;
         let json_string = serde_json::to_string_pretty(&results)?;
-        println!("{}", json_string);
         Ok(Box::new(json_string))
     }
 }

@@ -8,9 +8,11 @@ use crate::prompts::{
 use crate::tools::{FinalAnswerTool, Tool};
 use std::collections::HashMap;
 
+use crate::logger::LOGGER;
 use anyhow::{Error as E, Result};
 use colored::Colorize;
 use log::info;
+
 const DEFAULT_TOOL_DESCRIPTION_TEMPLATE: &str = r#"
 {{ tool.name }}: {{ tool.description }}
     Takes inputs: {{tool.inputs}}
@@ -18,6 +20,7 @@ const DEFAULT_TOOL_DESCRIPTION_TEMPLATE: &str = r#"
 "#;
 
 use std::fmt::Debug;
+use std::io::Write;
 
 pub fn get_tool_description_with_args(tool: &dyn Tool) -> String {
     let mut description = DEFAULT_TOOL_DESCRIPTION_TEMPLATE.to_string();
@@ -240,6 +243,10 @@ impl<M: Model + Debug> MultiStepAgent<M> {
         description: Option<&str>,
         max_steps: Option<usize>,
     ) -> Result<Self> {
+        // Initialize logger
+        log::set_logger(&LOGGER).unwrap();
+        log::set_max_level(log::LevelFilter::Info);
+
         let name = "MultiStepAgent";
 
         let system_prompt_template = match system_prompt {

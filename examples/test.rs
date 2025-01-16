@@ -1,75 +1,72 @@
-use colored::*;
-use log::{self, info, Level, Metadata, Record};
+use anyhow::Result;
+use clap::{Parser, ValueEnum};
 use smolagents::agents::{Agent, FunctionCallingAgent};
 use smolagents::models::openai::OpenAIServerModel;
-use smolagents::tools::{DuckDuckGoSearchTool, GoogleSearchTool, VisitWebsiteTool};
-use std::io::Write;
+use smolagents::tools::{DuckDuckGoSearchTool, Tool, VisitWebsiteTool};
 
-struct ColoredLogger;
-
-impl log::Log for ColoredLogger {
-    fn enabled(&self, metadata: &Metadata) -> bool {
-        metadata.level() <= Level::Info
-    }
-
-    fn log(&self, record: &Record) {
-        if self.enabled(record.metadata()) {
-            let mut stdout = std::io::stdout();
-            let msg = record.args().to_string();
-
-            // Add a newline before each message for spacing
-            writeln!(stdout).unwrap();
-
-            // Check for specific prefixes and apply different colors
-            if msg.starts_with("Observation:") {
-                let (prefix, content) = msg.split_at(12);
-                writeln!(stdout, "{}{}", prefix.yellow().bold(), content.green()).unwrap();
-            } else if msg.starts_with("Executing tool call:") {
-                let (prefix, content) = msg.split_at(21);
-                writeln!(stdout, "{}{}", prefix.magenta().bold(), content.cyan()).unwrap();
-            } else if msg.starts_with("Plan:") {
-                let (prefix, content) = msg.split_at(5);
-                writeln!(stdout, "{}{}", prefix.red().bold(), content.blue().italic()).unwrap();
-            } else if msg.starts_with("Final answer:") {
-                let (prefix, content) = msg.split_at(13);
-                writeln!(
-                    stdout,
-                    "\n{}{}\n",
-                    prefix.green().bold(),
-                    content.white().bold()
-                )
-                .unwrap();
-            } else {
-                writeln!(stdout, "{}", msg.blue()).unwrap();
-            }
-        }
-    }
-
-    fn flush(&self) {}
+#[derive(Debug, Clone, ValueEnum)]
+enum AgentType {
+    FunctionCalling,
 }
 
-static LOGGER: ColoredLogger = ColoredLogger;
+#[derive(Debug, Clone, ValueEnum)]
+enum ToolType {
+    DuckDuckGo,
+    VisitWebsite,
+}
 
-fn main() {
-    log::set_logger(&LOGGER).unwrap();
-    log::set_max_level(log::LevelFilter::Info);
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// The task to execute
+    #[arg(short = 't', long)]
+    task: String,
 
-    info!("Starting agent");
+    /// The type of agent to use
+    #[arg(short = 'a', long, value_enum, default_value = "function-calling")]
+    agent_type: AgentType,
 
-    let mut agent = FunctionCallingAgent::new(
-        OpenAIServerModel::new(None, None, None),
-        vec![
-            Box::new(DuckDuckGoSearchTool::new()),
-            Box::new(VisitWebsiteTool::new()),
-        ],
-        None,
-        None,
-        Some("multistep_agent"),
-        None,
-    )
-    .unwrap();
+    /// List of tools to use
+    #[arg(short = 'l', long = "tools", value_enum, num_args = 1.., value_delimiter = ',', default_values_t = [ToolType::DuckDuckGo, ToolType::VisitWebsite])]
+    tools: Vec<ToolType>,
 
-    agent
-        .run("Whats the weather in Eindhoven?", false, true)
-        .unwrap();
+    /// OpenAI API key (optional, will use OPENAI_API_KEY env var if not provided)
+    #[arg(short = 'k', long)]
+    api_key: Option<String>,
+
+    /// OpenAI model ID (optional)
+    #[arg(short, long)]
+    model: Option<String>,
+
+    /// Whether to stream the output
+    #[arg(short, long, default_value = "false")]
+    stream: bool,
+}
+
+fn create_tool(tool_type: &ToolType) -> Box<dyn Tool> {
+    match tool_type {
+        ToolType::DuckDuckGo => Box::new(DuckDuckGoSearchTool::new()),
+        ToolType::VisitWebsite => Box::new(VisitWebsiteTool::new()),
+    }
+}
+
+fn main() -> Result<()> {
+    let args = Args::parse();
+
+    // Create tools
+    let tools: Vec<Box<dyn Tool>> = args.tools.iter().map(create_tool).collect();
+
+    // Create model
+    let model = OpenAIServerModel::new(args.model.as_deref(), None, args.api_key);
+
+    // Create agent based on type
+    let mut agent = match args.agent_type {
+        AgentType::FunctionCalling => {
+            FunctionCallingAgent::new(model, tools, None, None, Some("CLI Agent"), None)?
+        }
+    };
+
+    // Run the agent
+    let _result = agent.run(&args.task, args.stream, true)?;
+    Ok(())
 }
