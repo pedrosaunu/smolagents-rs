@@ -16,3 +16,16 @@ terminal_size = "0.4.1"
 
 [dev-dependencies]
 clap = { version = "4.5.1", features = ["derive"] }
+
+[[bin]]
+name = "smolagents-rs"
+path = "src/bin/main.rs"
+required-features = ["cli-deps"]
+
+[features]
+cli-deps = ["dep:clap"]
+
+[dependencies.clap]
+version = "4.5.1"
+features = ["derive"]
+optional = true
