@@ -20,7 +20,6 @@ const DEFAULT_TOOL_DESCRIPTION_TEMPLATE: &str = r#"
 "#;
 
 use std::fmt::Debug;
-use std::io::Write;
 
 pub fn get_tool_description_with_args(tool: &dyn Tool) -> String {
     let mut description = DEFAULT_TOOL_DESCRIPTION_TEMPLATE.to_string();
