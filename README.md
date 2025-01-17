@@ -1,6 +1,6 @@
 # 🤖 smolagents-rs
 
-This is a rust implemnetation of HF ![smolagents](https://github.com/huggingface/smolagents) library. It provides a powerful autonomous agent framework written in Rust that solves complex tasks using tools and LLM models. smolagents-rs combines cutting-edge technology with seamless integration to deliver robust and autonomous task execution.
+This is a rust implementation of HF ![smolagents](https://github.com/huggingface/smolagents) library. It provides a powerful autonomous agent framework written in Rust that solves complex tasks using tools and LLM models. smolagents-rs combines cutting-edge technology with seamless integration to deliver robust and autonomous task execution.
 
 ---
 
