@@ -150,10 +150,6 @@ Compile once, run anywhere - from high-performance servers to WebAssembly in bro
 
 Apart from this, its essential to push new technologies around agentic systems to the Rust ecoystem and this library aims to do so. 
 
-## 📝 License
-
-This project is licensed under the MIT License.
-
 ---
 
 ## 🤝 Contributing
