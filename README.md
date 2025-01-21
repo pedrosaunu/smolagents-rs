@@ -18,6 +18,8 @@ This is a rust implementation of HF [smolagents](https://github.com/huggingface/
 
 ---
 
+![demo](https://res.cloudinary.com/dltwftrgc/image/upload/v1737485304/smolagents-small_fmaikq.gif)
+
 ## ✅ Feature Checklist
 
 ### Models
