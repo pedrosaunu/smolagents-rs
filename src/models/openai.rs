@@ -128,14 +128,14 @@ impl Model for OpenAIServerModel {
             })
             .collect::<Vec<_>>();
 
-        let tools = json!(tools_to_call_from);
+        // let tools = json!(tools_to_call_from);
             
-        println!("tools: {}", tools);
+        println!("tools: {:?}", tools_to_call_from);
         let mut body = json!({
             "model": self.model_id,
             "messages": messages,
             "temperature": self.temperature,
-            "tools": tools,
+            "tools": tools_to_call_from,
             "max_tokens": max_tokens,
             "tool_choice": "required"
         });

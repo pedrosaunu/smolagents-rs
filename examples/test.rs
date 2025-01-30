@@ -5,7 +5,7 @@ use clap::{Parser, ValueEnum};
 use smolagents::agents::{Agent, FunctionCallingAgent};
 use smolagents::models::openai::OpenAIServerModel;
 use smolagents::models::ollama::OllamaModelBuilder;
-use smolagents::tools::{DuckDuckGoSearchTool, FinalAnswerTool, Tool, ToolGroup, VisitWebsiteTool};
+use smolagents::tools::{DuckDuckGoSearchTool, FinalAnswerTool, Tool, ToolExt, ToolGroup, ToolInfo, VisitWebsiteTool};
 
 #[derive(Debug, Clone, ValueEnum)]
 enum AgentType {
@@ -54,7 +54,6 @@ enum ToolWrapper {
 }
 
 impl Tool for ToolWrapper {
-    type Params = serde_json::Value;
     fn name(&self) -> &'static str { 
         match self {
             Self::FinalAnswer(t) => t.name(),
@@ -102,9 +101,11 @@ impl Tool for ToolWrapper {
 fn main() -> Result<()> {
     let args = Args::parse();
 
-    // Create tools
-    let tools = vec![ToolWrapper::FinalAnswer(FinalAnswerTool::new())];
 
+    // Create tools
+    let tools = vec![FinalAnswerTool::new().as_dyn()];
+
+    println!("{:?}", serde_json::to_string_pretty(&FinalAnswerTool::new()));
     // Create model
     let model = OpenAIServerModel::new(args.model.as_deref(), None, args.api_key);
 
