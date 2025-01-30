@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use smolagents::agents::{Agent, FunctionCallingAgent};
 use smolagents::models::openai::OpenAIServerModel;
+use smolagents::models::ollama::OllamaModelBuilder;
 use smolagents::tools::{DuckDuckGoSearchTool, Tool, VisitWebsiteTool};
 
 #[derive(Debug, Clone, ValueEnum)]
@@ -58,6 +59,8 @@ fn main() -> Result<()> {
 
     // Create model
     let model = OpenAIServerModel::new(args.model.as_deref(), None, args.api_key);
+
+    // let model = OllamaModelBuilder::new().model_id("llama3.2").build();
 
     // Create agent based on type
     let mut agent = match args.agent_type {

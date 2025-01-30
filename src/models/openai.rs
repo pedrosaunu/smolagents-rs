@@ -7,7 +7,7 @@ use crate::tools::{get_json_schema, Tool};
 use anyhow::Result;
 use reqwest::blocking::Client;
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{json, Value};
 #[derive(Debug, Deserialize)]
 pub struct OpenAIResponse {
     pub choices: Vec<Choice>,
@@ -28,21 +28,34 @@ pub struct AssistantMessage {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct ToolCall {
-    pub id: String,
+    pub id: Option<String>,
     #[serde(rename = "type")]
-    pub call_type: String,
+    pub call_type: Option<String>,
     pub function: FunctionCall,
 }
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct FunctionCall {
     pub name: String,
-    pub arguments: String,
+    pub arguments: Value,
 }
 
 impl FunctionCall {
     pub fn get_arguments(&self) -> Result<HashMap<String, String>> {
-        Ok(serde_json::from_str(&self.arguments)?)
+        // First try to parse as a HashMap directly
+        if let Ok(map) = serde_json::from_value(self.arguments.clone()) {
+            return Ok(map);
+        }
+        
+        // If that fails, try to parse as a string and then parse that string as JSON
+        if let Value::String(arg_str) = &self.arguments {
+            if let Ok(parsed) = serde_json::from_str(arg_str) {
+                return Ok(parsed);
+            }
+        }
+        
+        // If all parsing attempts fail, return the original error
+        Err(anyhow::anyhow!("Failed to parse arguments as HashMap or JSON string"))
     }
 }
 

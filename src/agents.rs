@@ -565,7 +565,16 @@ impl<M: Model + Debug> Agent for FunctionCallingAgent<M> {
                         )])),
                     )
                     .unwrap();
-
+                
+                match model_message.get_response() {
+                    Ok(response) => {
+                        if !response.trim().is_empty() {
+                            return Ok(Some(response));
+                        }
+                    }
+                    Err(_) => {}
+                }
+                
                 let tool_names = model_message.get_tools_used().unwrap();
                 let tool_name = tool_names.first().unwrap().clone().function.name;
                 let tool_args = model_message
@@ -593,9 +602,9 @@ impl<M: Model + Debug> Agent for FunctionCallingAgent<M> {
                         step_log.tool_call = Some(ToolCall {
                             name: tool_name.clone(),
                             arguments: tool_args.clone(),
-                            id: tool_call_id.clone(),
+                            id: tool_call_id.unwrap_or_default(),
                         });
-
+        
                         info!(
                             "Executing tool call: {} with arguments: {:?}",
                             tool_name, tool_args
