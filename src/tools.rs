@@ -47,7 +47,7 @@ pub fn get_json_schema(tool: &dyn Tool) -> serde_json::Value {
     })
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Default)]
 pub struct BaseTool {
     pub name: &'static str,
     pub description: &'static str,
@@ -80,14 +80,9 @@ impl Tool for BaseTool {
         Ok(Box::new("Not implemented"))
     }
 }
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Default)]
 pub struct VisitWebsiteTool {
     pub tool: BaseTool,
-}
-impl Default for VisitWebsiteTool {
-    fn default() -> Self {
-        VisitWebsiteTool::new()
-    }
 }
 
 impl VisitWebsiteTool {
@@ -171,15 +166,11 @@ impl Tool for VisitWebsiteTool {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Default)]
 pub struct FinalAnswerTool {
     pub tool: BaseTool,
 }
-impl Default for FinalAnswerTool {
-    fn default() -> Self {
-        FinalAnswerTool::new()
-    }
-}
+
 impl FinalAnswerTool {
     pub fn new() -> Self {
         FinalAnswerTool {
@@ -224,17 +215,12 @@ impl Tool for FinalAnswerTool {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Default)]
 pub struct GoogleSearchTool {
     pub tool: BaseTool,
     pub api_key: String,
 }
 
-impl Default for GoogleSearchTool {
-    fn default() -> Self {
-        GoogleSearchTool::new(None)
-    }
-}
 
 impl GoogleSearchTool {
     pub fn new(api_key: Option<String>) -> Self {
@@ -376,14 +362,14 @@ impl Tool for GoogleSearchTool {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Default)]
 pub struct SearchResult {
     pub title: String,
     pub snippet: String,
     pub url: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Default)]
 pub struct DuckDuckGoSearchTool {
     pub tool: BaseTool,
 }

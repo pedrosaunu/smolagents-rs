@@ -566,15 +566,13 @@ impl<M: Model + Debug> Agent for FunctionCallingAgent<M> {
                     )
                     .unwrap();
                 
-                match model_message.get_response() {
-                    Ok(response) => {
+                if let Ok(response) = model_message.get_response() {
                         if !response.trim().is_empty() {
-                            return Ok(Some(response));
-                        }
+                        return Ok(Some(response));
                     }
-                    Err(_) => {}
                 }
-                
+            
+
                 let tool_names = model_message.get_tools_used().unwrap();
                 let tool_name = tool_names.first().unwrap().clone().function.name;
                 let tool_args = model_message

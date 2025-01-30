@@ -10,7 +10,7 @@ use crate::{
 };
 
 use super::{
-    model_traits::{Model, ModelResponse}, openai::{OpenAIResponse, ToolCall}, types::{Message, MessageRole}
+    model_traits::{Model, ModelResponse}, openai::ToolCall, types::{Message, MessageRole}
 };
 
 #[derive(Debug, Deserialize)]
@@ -41,13 +41,16 @@ pub struct OllamaModel {
     temperature: f32,
     url: String,
     client: reqwest::blocking::Client,
+    ctx_length: usize,
 }
 
+#[derive(Default)]
 pub struct OllamaModelBuilder {
     model_id: String,
     temperature: Option<f32>,
     client: Option<reqwest::blocking::Client>,
     url: Option<String>,
+    ctx_length: Option<usize>,
 }
 
 impl OllamaModelBuilder {
@@ -58,6 +61,7 @@ impl OllamaModelBuilder {
             temperature: Some(0.1),
             client: Some(client),
             url: Some("http://localhost:11434".to_string()),
+            ctx_length: Some(2048),
         }
     }
 
@@ -76,12 +80,18 @@ impl OllamaModelBuilder {
         self
     }
 
+    pub fn ctx_length(mut self, ctx_length: usize) -> Self {
+        self.ctx_length = Some(ctx_length);
+        self
+    }
+
     pub fn build(self) -> OllamaModel {
         OllamaModel {
             model_id: self.model_id,
             temperature: self.temperature.unwrap_or(0.1),
             url: self.url.unwrap_or("http://localhost:11434".to_string()),
-            client: self.client.unwrap_or(reqwest::blocking::Client::new()),
+            client: self.client.unwrap_or_default(),
+            ctx_length: self.ctx_length.unwrap_or(2048),
         }
     }
 }
@@ -92,7 +102,7 @@ impl Model for OllamaModel {
         messages: Vec<Message>,
         tools_to_call_from: Vec<Box<&dyn Tool>>,
         max_tokens: Option<usize>,
-        args: Option<HashMap<String, Vec<String>>>,
+        _args: Option<HashMap<String, Vec<String>>>,
     ) -> Result<impl ModelResponse, AgentError> {
         let messages = messages
             .iter()
@@ -114,10 +124,13 @@ impl Model for OllamaModel {
             "messages": messages,
             "temperature": self.temperature,
             "stream": false,
+            "options": json!({
+                "num_ctx": self.ctx_length
+            }),
             "tools": tools,
             "max_tokens": max_tokens.unwrap_or(1500),
         });
-
+        // println!("Body: {}", serde_json::to_string_pretty(&body.get("messages").unwrap()).unwrap());
         let response = self.client.post(format!("{}/api/chat", self.url)).json(&body).send().map_err(|e| {
             AgentError::Generation(format!("Failed to get response from Ollama: {}", e))
         })?;

@@ -60,8 +60,6 @@ fn main() -> Result<()> {
     // Create model
     let model = OpenAIServerModel::new(args.model.as_deref(), None, args.api_key);
 
-    // let model = OllamaModelBuilder::new().model_id("llama3.2").build();
-
     // Create agent based on type
     let mut agent = match args.agent_type {
         AgentType::FunctionCalling => {
