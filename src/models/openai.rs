@@ -3,10 +3,10 @@ use std::collections::HashMap;
 use crate::errors::AgentError;
 use crate::models::model_traits::{Model, ModelResponse};
 use crate::models::types::{Message, MessageRole};
-use crate::tools::{get_json_schema, Tool};
+use crate::tools::{get_json_schema, Tool, ToolInfo};
 use anyhow::Result;
 use reqwest::blocking::Client;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 #[derive(Debug, Deserialize)]
 pub struct OpenAIResponse {
@@ -26,7 +26,7 @@ pub struct AssistantMessage {
     pub refusal: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ToolCall {
     pub id: Option<String>,
     #[serde(rename = "type")]
@@ -34,7 +34,7 @@ pub struct ToolCall {
     pub function: FunctionCall,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FunctionCall {
     pub name: String,
     pub arguments: Value,
@@ -113,7 +113,7 @@ impl Model for OpenAIServerModel {
     fn run(
         &self,
         messages: Vec<Message>,
-        tools_to_call_from: Vec<Box<&dyn Tool>>,
+        tools_to_call_from: Vec<ToolInfo>,
         max_tokens: Option<usize>,
         args: Option<HashMap<String, Vec<String>>>,
     ) -> Result<impl ModelResponse, AgentError> {
@@ -128,11 +128,9 @@ impl Model for OpenAIServerModel {
             })
             .collect::<Vec<_>>();
 
-        let tools = tools_to_call_from
-            .into_iter()
-            .map(|tool| get_json_schema(&**tool))
-            .collect::<Vec<_>>();
-
+        let tools = json!(tools_to_call_from);
+            
+        println!("tools: {}", tools);
         let mut body = json!({
             "model": self.model_id,
             "messages": messages,

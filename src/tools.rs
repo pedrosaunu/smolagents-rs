@@ -1,6 +1,7 @@
 use anyhow::Result;
 use htmd::HtmlToMarkdown;
 use reqwest::Url;
+use schemars::gen::SchemaSettings;
 use schemars::schema::RootSchema;
 use scraper::Selector;
 use serde::de::DeserializeOwned;
@@ -10,6 +11,8 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use schemars::JsonSchema;
+
+use crate::models::openai::FunctionCall;
 pub trait Parameters: DeserializeOwned + JsonSchema {}
 pub trait Tool: Debug {
     type Params: Parameters;
@@ -18,7 +21,7 @@ pub trait Tool: Debug {
     fn inputs(&self) -> &HashMap<&'static str, HashMap<&'static str, String>>;
     fn output_type(&self) -> &'static str;
     fn is_initialized(&self) -> bool;
-    fn forward(&self, arguments: Self::Params) -> Result<Box<dyn Any>>;
+    fn forward(&self, arguments: Self::Params) -> Result<String>;
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -41,22 +44,56 @@ pub struct ToolFunctionInfo {
     parameters: RootSchema,
 }
 
+impl ToolInfo {
+    fn new<P: Parameters, T: Tool<Params = P>>(tool: &T) -> Self {
+        let mut settings = SchemaSettings::draft07();
+        settings.inline_subschemas = true;
+        let generator = settings.into_generator();
+
+        let parameters = generator.into_root_schema_for::<P>();
+
+        Self {
+            tool_type: ToolType::Function,
+            function: ToolFunctionInfo {
+                name: tool.name(),
+                description: tool.description(),
+                parameters,
+            },
+        }
+    }
+}
 
 pub fn get_json_schema(tool: &ToolInfo) -> serde_json::Value {
     json!(tool)
 }
 
-pub trait ToolGroup {
-    fn tools(&self) -> Vec<Box<dyn Tool>>;
+pub trait ToolGroup: Debug {
+    fn call(&self, arguments: &FunctionCall) -> Result<String>;
+    fn tool_info(&self) -> Vec<ToolInfo>;
+}
+
+impl<T: Tool<Params = serde_json::Value>> ToolGroup for Vec<T> {
+    fn call(&self, arguments: &FunctionCall) -> Result<String> {
+        let tool = self.iter().find(|tool| tool.name() == arguments.name);
+        if let Some(tool) = tool {
+            let p = serde_json::from_value(arguments.arguments.clone())?;
+            return tool.forward(p);
+        }
+        Err(anyhow::anyhow!("Tool not found"))
+    }
+    fn tool_info(&self) -> Vec<ToolInfo> {
+        self.iter().map(|tool| ToolInfo::new(tool)).collect()
+    }
 }
 
 #[derive(Deserialize, JsonSchema)]
-struct BaseParams{
+#[schemars(title = "BaseParams")]
+pub struct BaseParams {
     #[schemars(description = "The name of the tool")]
     name: String,
 }
-impl<P: DeserializeOwned + JsonSchema> Parameters for P {}
 
+impl<P: DeserializeOwned + JsonSchema> Parameters for P where P: JsonSchema {}
 
 #[derive(Debug, Serialize)]
 pub struct BaseTool {
@@ -88,8 +125,8 @@ impl Tool for BaseTool {
     fn is_initialized(&self) -> bool {
         self.is_initialized
     }
-    fn forward(&self, _arguments: BaseParams) -> Result<Box<dyn Any>> {
-        Ok(Box::new("Not implemented"))
+    fn forward(&self, _arguments: BaseParams) -> Result<String> {
+        Ok("Not implemented".to_string())
     }
 }
 #[derive(Debug, Serialize)]
@@ -157,7 +194,8 @@ impl VisitWebsiteTool {
 }
 
 #[derive(Deserialize, JsonSchema)]
-struct VisitWebsiteToolParams{
+#[schemars(title = "VisitWebsiteToolParams")]
+pub struct VisitWebsiteToolParams {
     #[schemars(description = "The url of the website to visit")]
     url: String,
 }
@@ -165,11 +203,11 @@ struct VisitWebsiteToolParams{
 impl Tool for VisitWebsiteTool {
     type Params = VisitWebsiteToolParams;
     fn name(&self) -> &'static str {
-        self.tool.name()
+        self.tool.name
     }
 
     fn description(&self) -> &'static str {
-        self.tool.description()
+        self.tool.description
     }
 
     fn inputs(&self) -> &HashMap<&'static str, HashMap<&'static str, String>> {
@@ -184,14 +222,15 @@ impl Tool for VisitWebsiteTool {
         self.tool.is_initialized()
     }
 
-    fn forward(&self, arguments: VisitWebsiteToolParams) -> Result<Box<dyn Any>> {
+    fn forward(&self, arguments: VisitWebsiteToolParams) -> Result<String> {
         let url = arguments.url;
-        Ok(Box::new(self.forward(&url)))
+        Ok(self.forward(&url))
     }
 }
 
 #[derive(Deserialize, JsonSchema)]
-pub struct FinalAnswerToolParams{
+#[schemars(title = "FinalAnswerToolParams")]
+pub struct FinalAnswerToolParams {
     #[schemars(description = "The final answer to the problem")]
     answer: String,
 }
@@ -229,10 +268,10 @@ impl FinalAnswerTool {
 impl Tool for FinalAnswerTool {
     type Params = FinalAnswerToolParams;
     fn name(&self) -> &'static str {
-        self.tool.name()
+        self.tool.name
     }
     fn description(&self) -> &'static str {
-        self.tool.description()
+        self.tool.description
     }
     fn inputs(&self) -> &HashMap<&'static str, HashMap<&'static str, String>> {
         self.tool.inputs()
@@ -244,14 +283,15 @@ impl Tool for FinalAnswerTool {
         self.tool.is_initialized()
     }
 
-    fn forward(&self, arguments: FinalAnswerToolParams) -> Result<Box<dyn Any>> {
+    fn forward(&self, arguments: FinalAnswerToolParams) -> Result<String> {
         let answer = arguments.answer;
-        Ok(Box::new(answer.to_string()))
+        Ok(answer.to_string())
     }
 }
 
 #[derive(Deserialize, JsonSchema)]
-struct GoogleSearchToolParams{
+#[schemars(title = "GoogleSearchToolParams")]
+pub struct GoogleSearchToolParams {
     #[schemars(description = "The query to search for")]
     query: String,
     #[schemars(description = "Optionally restrict results to a certain year")]
@@ -386,10 +426,10 @@ impl GoogleSearchTool {
 impl Tool for GoogleSearchTool {
     type Params = GoogleSearchToolParams;
     fn name(&self) -> &'static str {
-        self.tool.name()
+        self.tool.name
     }
     fn description(&self) -> &'static str {
-        self.tool.description()
+        self.tool.description
     }
     fn inputs(&self) -> &HashMap<&'static str, HashMap<&'static str, String>> {
         self.tool.inputs()
@@ -401,20 +441,19 @@ impl Tool for GoogleSearchTool {
         self.tool.is_initialized()
     }
 
-    fn forward(&self, arguments: GoogleSearchToolParams) -> Result<Box<dyn Any>> {
+    fn forward(&self, arguments: GoogleSearchToolParams) -> Result<String> {
         let query = arguments.query;
         let filter_year = arguments.filter_year;
-        Ok(Box::new(self.forward(&query, filter_year.as_deref())))
+        Ok(self.forward(&query, filter_year.as_deref()))
     }
 }
 
 #[derive(Deserialize, JsonSchema)]
-struct DuckDuckGoSearchToolParams{
+#[schemars(title = "DuckDuckGoSearchToolParams")]
+pub struct DuckDuckGoSearchToolParams {
     #[schemars(description = "The query to search for")]
     query: String,
 }
-
-
 
 #[derive(Debug, Serialize)]
 pub struct SearchResult {
@@ -505,10 +544,10 @@ impl DuckDuckGoSearchTool {
 impl Tool for DuckDuckGoSearchTool {
     type Params = DuckDuckGoSearchToolParams;
     fn name(&self) -> &'static str {
-        self.tool.name()
+        self.tool.name
     }
     fn description(&self) -> &'static str {
-        self.tool.description()
+        self.tool.description
     }
     fn inputs(&self) -> &HashMap<&'static str, HashMap<&'static str, String>> {
         self.tool.inputs()
@@ -519,11 +558,11 @@ impl Tool for DuckDuckGoSearchTool {
     fn is_initialized(&self) -> bool {
         self.tool.is_initialized()
     }
-    fn forward(&self, arguments: DuckDuckGoSearchToolParams) -> Result<Box<dyn Any>> {
+    fn forward(&self, arguments: DuckDuckGoSearchToolParams) -> Result<String> {
         let query = arguments.query;
         let results = self.forward(&query)?;
         let json_string = serde_json::to_string_pretty(&results)?;
-        Ok(Box::new(json_string))
+        Ok(json_string)
     }
 }
 
@@ -543,7 +582,7 @@ mod tests {
         let tool = FinalAnswerTool::new();
         let arguments = FinalAnswerToolParams{answer: "The answer is 42".to_string()};
         let result = tool.forward(arguments).unwrap();
-        assert_eq!(result.downcast_ref::<String>().unwrap(), "The answer is 42");
+        assert_eq!(result, "The answer is 42");
     }
 
     #[test]

@@ -6,7 +6,7 @@ use serde_json::json;
 use anyhow::Result;
 use crate::{
     errors::AgentError,
-    tools::{get_json_schema, Tool},
+    tools::{get_json_schema, Tool, ToolInfo},
 };
 
 use super::{
@@ -90,7 +90,7 @@ impl Model for OllamaModel {
     fn run(
         &self,
         messages: Vec<Message>,
-        tools_to_call_from: Vec<Box<&dyn Tool>>,
+        tools_to_call_from: Vec<ToolInfo>,
         max_tokens: Option<usize>,
         args: Option<HashMap<String, Vec<String>>>,
     ) -> Result<impl ModelResponse, AgentError> {
@@ -104,10 +104,7 @@ impl Model for OllamaModel {
             })
             .collect::<Vec<_>>();
 
-        let tools = tools_to_call_from
-            .into_iter()
-            .map(|tool| get_json_schema(&**tool))
-            .collect::<Vec<_>>();
+        let tools = json!(tools_to_call_from);
 
         let body = json!({
             "model": self.model_id,
