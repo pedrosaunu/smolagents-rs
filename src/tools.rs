@@ -1,51 +1,62 @@
 use anyhow::Result;
 use htmd::HtmlToMarkdown;
 use reqwest::Url;
+use schemars::schema::RootSchema;
 use scraper::Selector;
-use serde::Serialize;
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::any::Any;
 use std::collections::HashMap;
 use std::fmt::Debug;
+use schemars::JsonSchema;
+pub trait Parameters: DeserializeOwned + JsonSchema {}
 pub trait Tool: Debug {
+    type Params: Parameters;
     fn name(&self) -> &'static str;
     fn description(&self) -> &'static str;
     fn inputs(&self) -> &HashMap<&'static str, HashMap<&'static str, String>>;
     fn output_type(&self) -> &'static str;
     fn is_initialized(&self) -> bool;
-    fn forward(&self, arguments: HashMap<String, String>) -> Result<Box<dyn Any>>;
+    fn forward(&self, arguments: Self::Params) -> Result<Box<dyn Any>>;
 }
 
-pub fn get_json_schema(tool: &dyn Tool) -> serde_json::Value {
-    let mut properties = HashMap::new();
-    for (key, value) in tool.inputs().iter() {
-        // Create a new HashMap without the 'required' field
-        let mut clean_value = HashMap::new();
-        clean_value.insert("type", value.get("type").unwrap().clone());
-        clean_value.insert("description", value.get("description").unwrap().clone());
-        properties.insert(*key, clean_value);
-    }
-
-    let required: Vec<String> = tool
-        .inputs()
-        .iter()
-        .filter(|(_, value)| value.get("required").unwrap() == "true")
-        .map(|(key, _)| (*key).to_string())
-        .collect();
-
-    json!({
-        "type": "function",
-        "function": {
-            "name": tool.name(),
-            "description": tool.description(),
-            "parameters": {
-                "type": "object",
-                "properties": properties,
-                "required": required
-            },
-        }
-    })
+#[derive(serde::Serialize, serde::Deserialize)]
+pub enum ToolType {
+    #[serde(rename = "function")]
+    Function,
 }
+
+#[derive( Serialize)]
+pub struct ToolInfo {
+    #[serde(rename = "type")]
+    tool_type: ToolType,
+    pub function: ToolFunctionInfo,
+}
+
+#[derive(Serialize)]
+pub struct ToolFunctionInfo {
+    pub name: &'static str,
+    description: &'static str,
+    parameters: RootSchema,
+}
+
+
+pub fn get_json_schema(tool: &ToolInfo) -> serde_json::Value {
+    json!(tool)
+}
+
+pub trait ToolGroup {
+    fn tools(&self) -> Vec<Box<dyn Tool>>;
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct BaseParams{
+    #[schemars(description = "The name of the tool")]
+    name: String,
+}
+impl<P: DeserializeOwned + JsonSchema> Parameters for P {}
+
 
 #[derive(Debug, Serialize)]
 pub struct BaseTool {
@@ -57,6 +68,7 @@ pub struct BaseTool {
 }
 
 impl Tool for BaseTool {
+    type Params = BaseParams;
     fn name(&self) -> &'static str {
         self.name
     }
@@ -76,7 +88,7 @@ impl Tool for BaseTool {
     fn is_initialized(&self) -> bool {
         self.is_initialized
     }
-    fn forward(&self, _arguments: HashMap<String, String>) -> Result<Box<dyn Any>> {
+    fn forward(&self, _arguments: BaseParams) -> Result<Box<dyn Any>> {
         Ok(Box::new("Not implemented"))
     }
 }
@@ -144,7 +156,14 @@ impl VisitWebsiteTool {
     }
 }
 
+#[derive(Deserialize, JsonSchema)]
+struct VisitWebsiteToolParams{
+    #[schemars(description = "The url of the website to visit")]
+    url: String,
+}
+
 impl Tool for VisitWebsiteTool {
+    type Params = VisitWebsiteToolParams;
     fn name(&self) -> &'static str {
         self.tool.name()
     }
@@ -165,10 +184,16 @@ impl Tool for VisitWebsiteTool {
         self.tool.is_initialized()
     }
 
-    fn forward(&self, arguments: HashMap<String, String>) -> Result<Box<dyn Any>> {
-        let url = arguments.get("url").unwrap();
-        Ok(Box::new(self.forward(url)))
+    fn forward(&self, arguments: VisitWebsiteToolParams) -> Result<Box<dyn Any>> {
+        let url = arguments.url;
+        Ok(Box::new(self.forward(&url)))
     }
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct FinalAnswerToolParams{
+    #[schemars(description = "The final answer to the problem")]
+    answer: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -202,6 +227,7 @@ impl FinalAnswerTool {
 }
 
 impl Tool for FinalAnswerTool {
+    type Params = FinalAnswerToolParams;
     fn name(&self) -> &'static str {
         self.tool.name()
     }
@@ -218,10 +244,18 @@ impl Tool for FinalAnswerTool {
         self.tool.is_initialized()
     }
 
-    fn forward(&self, arguments: HashMap<String, String>) -> Result<Box<dyn Any>> {
-        let answer = arguments.get("answer").unwrap();
+    fn forward(&self, arguments: FinalAnswerToolParams) -> Result<Box<dyn Any>> {
+        let answer = arguments.answer;
         Ok(Box::new(answer.to_string()))
     }
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct GoogleSearchToolParams{
+    #[schemars(description = "The query to search for")]
+    query: String,
+    #[schemars(description = "Optionally restrict results to a certain year")]
+    filter_year: Option<String>,
 }
 
 #[derive(Debug)]
@@ -350,6 +384,7 @@ impl GoogleSearchTool {
 }
 
 impl Tool for GoogleSearchTool {
+    type Params = GoogleSearchToolParams;
     fn name(&self) -> &'static str {
         self.tool.name()
     }
@@ -366,15 +401,20 @@ impl Tool for GoogleSearchTool {
         self.tool.is_initialized()
     }
 
-    fn forward(&self, arguments: HashMap<String, String>) -> Result<Box<dyn Any>> {
-        let query = arguments.get("query").unwrap();
-        let filter_year = match arguments.contains_key("filter_year") {
-            true => Some(arguments.get("filter_year").unwrap().as_str()),
-            false => None,
-        };
-        Ok(Box::new(self.forward(query, filter_year)))
+    fn forward(&self, arguments: GoogleSearchToolParams) -> Result<Box<dyn Any>> {
+        let query = arguments.query;
+        let filter_year = arguments.filter_year;
+        Ok(Box::new(self.forward(&query, filter_year.as_deref())))
     }
 }
+
+#[derive(Deserialize, JsonSchema)]
+struct DuckDuckGoSearchToolParams{
+    #[schemars(description = "The query to search for")]
+    query: String,
+}
+
+
 
 #[derive(Debug, Serialize)]
 pub struct SearchResult {
@@ -463,6 +503,7 @@ impl DuckDuckGoSearchTool {
 }
 
 impl Tool for DuckDuckGoSearchTool {
+    type Params = DuckDuckGoSearchToolParams;
     fn name(&self) -> &'static str {
         self.tool.name()
     }
@@ -478,9 +519,9 @@ impl Tool for DuckDuckGoSearchTool {
     fn is_initialized(&self) -> bool {
         self.tool.is_initialized()
     }
-    fn forward(&self, arguments: HashMap<String, String>) -> Result<Box<dyn Any>> {
-        let query = arguments.get("query").unwrap();
-        let results = self.forward(query)?;
+    fn forward(&self, arguments: DuckDuckGoSearchToolParams) -> Result<Box<dyn Any>> {
+        let query = arguments.query;
+        let results = self.forward(&query)?;
         let json_string = serde_json::to_string_pretty(&results)?;
         Ok(Box::new(json_string))
     }
@@ -500,7 +541,7 @@ mod tests {
     #[test]
     fn test_final_answer_tool() {
         let tool = FinalAnswerTool::new();
-        let arguments = HashMap::from([("answer".to_string(), "The answer is 42".to_string())]);
+        let arguments = FinalAnswerToolParams{answer: "The answer is 42".to_string()};
         let result = tool.forward(arguments).unwrap();
         assert_eq!(result.downcast_ref::<String>().unwrap(), "The answer is 42");
     }

@@ -5,7 +5,7 @@ use crate::models::types::MessageRole;
 use crate::prompts::{
     user_prompt_plan, FUNCTION_CALLING_SYSTEM_PROMPT, SYSTEM_PROMPT_FACTS, SYSTEM_PROMPT_PLAN,
 };
-use crate::tools::{FinalAnswerTool, Tool};
+use crate::tools::{FinalAnswerTool, FinalAnswerToolParams, Tool, ToolInfo};
 use std::collections::HashMap;
 
 use crate::logger::LOGGER;
@@ -21,41 +21,26 @@ const DEFAULT_TOOL_DESCRIPTION_TEMPLATE: &str = r#"
 
 use std::fmt::Debug;
 
-pub fn get_tool_description_with_args(tool: &dyn Tool) -> String {
+pub fn get_tool_description_with_args(tool: &ToolInfo) -> String {
     let mut description = DEFAULT_TOOL_DESCRIPTION_TEMPLATE.to_string();
-    description = description.replace("{{ tool.name }}", tool.name());
-    description = description.replace("{{ tool.description }}", tool.description());
-
-    let inputs_description: Vec<String> = tool
-        .inputs()
-        .iter()
-        .map(|(key, value)| {
-            let type_desc = value.get("type").unwrap();
-            let desc = value.get("description").unwrap();
-            // .downcast_ref::<&str>()
-            // .unwrap();
-            format!("{} ({}): {}", key, type_desc, desc)
-        })
-        .collect();
-
-    description = description.replace("{{tool.inputs}}", &inputs_description.join(", "));
-    description = description.replace("{{tool.output_type}}", tool.output_type());
+    description = description.replace("{{ tool.name }}", tool.function.name);
+    description = description.replace("{{ tool.description }}", &serde_json::to_string(&tool).unwrap());
 
     description
 }
 
-pub fn get_tool_descriptions(tools: Vec<Box<&dyn Tool>>) -> Vec<String> {
+pub fn get_tool_descriptions(tools: &[ToolInfo]) -> Vec<String> {
     tools
         .into_iter()
-        .map(|tool| get_tool_description_with_args(&**tool))
+        .map(|tool| get_tool_description_with_args(&tool))
         .collect()
 }
-pub fn format_prompt_with_tools(tools: Vec<Box<&dyn Tool>>, prompt_template: &str) -> String {
-    let tool_descriptions = get_tool_descriptions(tools.clone());
+pub fn format_prompt_with_tools(tools: Vec<ToolInfo>, prompt_template: &str) -> String {
+    let tool_descriptions = get_tool_descriptions(&tools);
     let mut prompt = prompt_template.to_string();
     prompt = prompt.replace("{{tool_descriptions}}", &tool_descriptions.join("\n"));
     if prompt.contains("{{tool_names}}") {
-        let tool_names: Vec<String> = tools.iter().map(|tool| tool.name().to_string()).collect();
+        let tool_names: Vec<String> = tools.iter().map(|tool| tool.function.name.to_string()).collect();
         prompt = prompt.replace("{{tool_names}}", &tool_names.join(", "));
     }
     prompt
@@ -185,9 +170,9 @@ pub struct ToolCall {
 // Define a trait for the parent functionality
 
 #[derive(Debug)]
-pub struct MultiStepAgent<M: Model> {
+pub struct MultiStepAgent<M: Model, T: Tool> {
     pub model: M,
-    pub tools: HashMap<String, Box<dyn Tool>>,
+    pub tools: Vec<T>,
     pub system_prompt_template: String,
     pub name: &'static str,
     pub managed_agents: Option<HashMap<String, Box<dyn Agent>>>,
@@ -199,7 +184,7 @@ pub struct MultiStepAgent<M: Model> {
     pub logs: Vec<Step>,
 }
 
-impl<M: Model + Debug> Agent for MultiStepAgent<M> {
+impl<M: Model + Debug, T: Tool> Agent for MultiStepAgent<M, T> {
     fn name(&self) -> &'static str {
         self.name
     }
@@ -233,10 +218,10 @@ impl<M: Model + Debug> Agent for MultiStepAgent<M> {
     }
 }
 
-impl<M: Model + Debug> MultiStepAgent<M> {
+impl<M: Model + Debug, T: Tool> MultiStepAgent<M, T> {
     pub fn new(
         model: M,
-        tools: Vec<Box<dyn Tool>>,
+        tools: &mut Vec<Box<impl Tool>>,
         system_prompt: Option<&str>,
         managed_agents: Option<HashMap<String, Box<dyn Agent>>>,
         description: Option<&str>,
@@ -257,10 +242,11 @@ impl<M: Model + Debug> MultiStepAgent<M> {
             None => "A multi-step agent that can solve tasks using a series of tools".to_string(),
         };
         let final_answer_tool: Box<dyn Tool> = Box::new(FinalAnswerTool::new());
-        let mut tools: HashMap<String, Box<dyn Tool>> = tools
-            .into_iter()
-            .map(|tool| (tool.name().to_string(), tool))
-            .collect();
+        tools.push(final_answer_tool);
+        // let mut tools: HashMap<String, Box<dyn Tool<Params = FinalAnswerToolParams>>> = tools
+        //     .into_iter()
+        //     .map(|tool| (tool.name().to_string(), tool))
+        //     .collect();
         tools.insert(final_answer_tool.name().to_string(), final_answer_tool);
 
         let mut agent = MultiStepAgent {
