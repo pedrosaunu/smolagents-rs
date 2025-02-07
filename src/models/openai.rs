@@ -8,6 +8,7 @@ use anyhow::Result;
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+
 #[derive(Debug, Deserialize)]
 pub struct OpenAIResponse {
     pub choices: Vec<Choice>,
@@ -37,7 +38,25 @@ pub struct ToolCall {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FunctionCall {
     pub name: String,
+    #[serde(deserialize_with = "deserialize_arguments")]
     pub arguments: Value,
+}
+
+// Add this function to handle argument deserialization
+fn deserialize_arguments<'de, D>(deserializer: D) -> Result<Value, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    
+    // If it's a string, try to parse it as JSON
+    if let Value::String(s) = &value {
+        if let Ok(parsed) = serde_json::from_str(s) {
+            return Ok(parsed);
+        }
+    }
+    
+    Ok(value)
 }
 
 impl FunctionCall {

@@ -5,7 +5,7 @@ use clap::{Parser, ValueEnum};
 use smolagents::agents::{Agent, FunctionCallingAgent};
 use smolagents::models::openai::OpenAIServerModel;
 use smolagents::models::ollama::OllamaModelBuilder;
-use smolagents::tools::{DuckDuckGoSearchTool, FinalAnswerTool, Tool, ToolExt, ToolGroup, ToolInfo, VisitWebsiteTool};
+use smolagents::tools::{DuckDuckGoSearchTool, FinalAnswerTool, Tool, ToolGroup, ToolInfo, VisitWebsiteTool};
 
 #[derive(Debug, Clone, ValueEnum)]
 enum AgentType {
@@ -46,64 +46,12 @@ struct Args {
     stream: bool,
 }
 
-#[derive(Debug)]
-enum ToolWrapper {
-    FinalAnswer(FinalAnswerTool),
-    DuckDuckGo(DuckDuckGoSearchTool),
-    VisitWebsite(VisitWebsiteTool),
-}
-
-impl Tool for ToolWrapper {
-    fn name(&self) -> &'static str { 
-        match self {
-            Self::FinalAnswer(t) => t.name(),
-            Self::DuckDuckGo(t) => t.name(),
-            Self::VisitWebsite(t) => t.name(),
-        }
-    }
-    fn description(&self) -> &'static str {
-        match self {
-            Self::FinalAnswer(t) => t.description(),
-            Self::DuckDuckGo(t) => t.description(),
-            Self::VisitWebsite(t) => t.description(),
-        }
-    }
-    fn inputs(&self) -> &HashMap<&'static str, HashMap<&'static str, String>> {
-        match self {
-            Self::FinalAnswer(t) => t.inputs(),
-            Self::DuckDuckGo(t) => t.inputs(),
-            Self::VisitWebsite(t) => t.inputs(),
-        }
-    }
-    fn output_type(&self) -> &'static str {
-        match self {
-            Self::FinalAnswer(t) => t.output_type(),
-            Self::DuckDuckGo(t) => t.output_type(),
-            Self::VisitWebsite(t) => t.output_type(),
-        }
-    }
-    fn is_initialized(&self) -> bool {
-        match self {
-            Self::FinalAnswer(t) => t.is_initialized(),
-            Self::DuckDuckGo(t) => t.is_initialized(),
-            Self::VisitWebsite(t) => t.is_initialized(),
-        }
-    }
-    fn forward(&self, args: serde_json::Value) -> Result<String> {
-        match self {
-            Self::FinalAnswer(t) => Tool::forward(t, serde_json::from_value(args)?),
-            Self::DuckDuckGo(t) => Tool::forward(t, serde_json::from_value(args)?),
-            Self::VisitWebsite(t) => Tool::forward(t, serde_json::from_value(args)?),
-        }
-    }
-}
-
 fn main() -> Result<()> {
     let args = Args::parse();
 
 
     // Create tools
-    let tools = vec![FinalAnswerTool::new().as_dyn()];
+    let tools = vec![Box::new(FinalAnswerTool::new()), Box::new(DuckDuckGoSearchTool::new())];
 
     println!("{:?}", serde_json::to_string_pretty(&FinalAnswerTool::new()));
     // Create model

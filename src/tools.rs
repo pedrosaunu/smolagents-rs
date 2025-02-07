@@ -15,12 +15,13 @@ use schemars::JsonSchema;
 use crate::models::openai::FunctionCall;
 pub trait Parameters: DeserializeOwned + JsonSchema {}
 pub trait Tool: Debug {
+    type Params: Parameters;
     fn name(&self) -> &'static str;
     fn description(&self) -> &'static str;
     fn inputs(&self) -> &HashMap<&'static str, HashMap<&'static str, String>>;
     fn output_type(&self) -> &'static str;
     fn is_initialized(&self) -> bool;
-    fn forward(&self, arguments: serde_json::Value) -> Result<String>;
+    fn forward(&self, arguments: Self::Params) -> Result<String>;
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
@@ -71,18 +72,22 @@ pub trait ToolGroup: Debug {
     fn tool_info(&self) -> Vec<ToolInfo>;
 }
 
-impl<T: Tool> ToolGroup for Vec<T> {
+impl<T: Tool<Params = P>, P: Parameters> ToolGroup for Vec<T> {
     fn call(&self, arguments: &FunctionCall) -> Result<String> {
         let tool = self.iter().find(|tool| tool.name() == arguments.name);
         if let Some(tool) = tool {
             let p = arguments.arguments.clone();
-            return tool.forward(p);
+            println!("arguments: {:?}", p);
+            let params: P = serde_json::from_value(p.clone())
+                .or_else(|_| serde_json::from_str(&p.to_string())).unwrap();
+            return tool.forward(params);
         }
         Err(anyhow::anyhow!("Tool not found"))
     }
     fn tool_info(&self) -> Vec<ToolInfo> {
-        self.iter().map(|tool| ToolInfo::new(tool)).collect()
+        self.iter().map(|tool| ToolInfo::new::<T::Params, T>(tool)).collect()
     }
+
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -104,6 +109,7 @@ pub struct BaseTool {
 }
 
 impl Tool for BaseTool {
+    type Params = serde_json::Value;
     fn name(&self) -> &'static str {
         self.name
     }
@@ -199,6 +205,7 @@ pub struct VisitWebsiteToolParams {
 }
 
 impl Tool for VisitWebsiteTool {
+    type Params = VisitWebsiteToolParams;
     fn name(&self) -> &'static str {
         self.tool.name
     }
@@ -219,14 +226,13 @@ impl Tool for VisitWebsiteTool {
         self.tool.is_initialized()
     }
 
-    fn forward(&self, arguments: serde_json::Value) -> Result<String> {
-        let params: VisitWebsiteToolParams = serde_json::from_value(arguments)?;
-        let url = params.url;
+    fn forward(&self, arguments: VisitWebsiteToolParams) -> Result<String> {
+        let url = arguments.url;
         Ok(self.forward(&url))
     }
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[derive(Debug,Deserialize, JsonSchema)]
 #[schemars(title = "FinalAnswerToolParams")]
 pub struct FinalAnswerToolParams {
     #[schemars(description = "The final answer to the problem")]
@@ -264,6 +270,7 @@ impl FinalAnswerTool {
 }
 
 impl Tool for FinalAnswerTool {
+    type Params = FinalAnswerToolParams;
     fn name(&self) -> &'static str {
         self.tool.name
     }
@@ -280,9 +287,8 @@ impl Tool for FinalAnswerTool {
         self.tool.is_initialized()
     }
 
-    fn forward(&self, arguments: serde_json::Value) -> Result<String> {
-        let params: FinalAnswerToolParams = serde_json::from_value(arguments)?;
-        Ok(params.answer)
+    fn forward(&self, arguments: FinalAnswerToolParams) -> Result<String> {
+        Ok(arguments.answer)
     }
 }
 
@@ -421,6 +427,7 @@ impl GoogleSearchTool {
 }
 
 impl Tool for GoogleSearchTool {
+    type Params = GoogleSearchToolParams;
     fn name(&self) -> &'static str {
         self.tool.name
     }
@@ -437,10 +444,9 @@ impl Tool for GoogleSearchTool {
         self.tool.is_initialized()
     }
 
-    fn forward(&self, arguments: serde_json::Value) -> Result<String> {
-        let params: GoogleSearchToolParams = serde_json::from_value(arguments)?;
-        let query = params.query;
-        let filter_year = params.filter_year;
+    fn forward(&self, arguments: GoogleSearchToolParams) -> Result<String> {
+        let query = arguments.query;
+        let filter_year = arguments.filter_year;
         Ok(self.forward(&query, filter_year.as_deref()))
     }
 }
@@ -539,6 +545,7 @@ impl DuckDuckGoSearchTool {
 }
 
 impl Tool for DuckDuckGoSearchTool {
+    type Params = DuckDuckGoSearchToolParams;
     fn name(&self) -> &'static str {
         self.tool.name
     }
@@ -554,48 +561,12 @@ impl Tool for DuckDuckGoSearchTool {
     fn is_initialized(&self) -> bool {
         self.tool.is_initialized()
     }
-    fn forward(&self, arguments: serde_json::Value) -> Result<String> {
-        let params: DuckDuckGoSearchToolParams = serde_json::from_value(arguments)?;
-        let query = params.query;
+    fn forward(&self, arguments: DuckDuckGoSearchToolParams) -> Result<String> {
+        let query = arguments.query;
         let results = self.forward(&query)?;
         let json_string = serde_json::to_string_pretty(&results)?;
         Ok(json_string)
     }
-}
-
-pub trait ToolExt: Tool {
-    fn as_dyn(self) -> Box<dyn Tool> 
-    where
-        Self: 'static + Sized,
-    {
-        Box::new(JsonParamWrapper(self))
-    }
-}
-#[derive(Debug)]
-struct JsonParamWrapper<T>(T);
-
-impl<T: Tool> Tool for JsonParamWrapper<T> {
-    fn name(&self) -> &'static str { self.0.name() }
-    fn description(&self) -> &'static str { self.0.description() }
-    fn inputs(&self) -> &HashMap<&'static str, HashMap<&'static str, String>> { self.0.inputs() }
-    fn output_type(&self) -> &'static str { self.0.output_type() }
-    fn is_initialized(&self) -> bool { self.0.is_initialized() }
-    
-    fn forward(&self, args: serde_json::Value) -> Result<String> {
-        let params = serde_json::from_value(args)?;
-        self.0.forward(params)
-    }
-}
-
-impl<T: Tool> ToolExt for T {}
-
-impl Tool for Box<dyn Tool> {
-    fn name(&self) -> &'static str { (**self).name() }
-    fn description(&self) -> &'static str { (**self).description() }
-    fn inputs(&self) -> &HashMap<&'static str, HashMap<&'static str, String>> { (**self).inputs() }
-    fn output_type(&self) -> &'static str { (**self).output_type() }
-    fn is_initialized(&self) -> bool { (**self).is_initialized() }
-    fn forward(&self, args: serde_json::Value) -> Result<String> { (**self).forward(args) }
 }
 
 #[cfg(test)]
@@ -612,9 +583,9 @@ mod tests {
     #[test]
     fn test_final_answer_tool() {
         let tool = FinalAnswerTool::new();
-        let arguments = serde_json::json!({
-            "answer": "The answer is 42"
-        });
+        let arguments = FinalAnswerToolParams {
+            answer: "The answer is 42".to_string(),
+        };
         let result = tool.forward(arguments).unwrap();
         assert_eq!(result, "The answer is 42");
     }

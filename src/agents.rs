@@ -222,7 +222,7 @@ impl<M: Model + Debug, T: ToolGroup> Agent for MultiStepAgent<M, T> {
 impl<M: Model + Debug, T: ToolGroup> MultiStepAgent<M, T> {
     pub fn new(
         model: M,
-        tools: T,
+        mut tools: T,
         system_prompt: Option<&str>,
         managed_agents: Option<HashMap<String, Box<dyn Agent>>>,
         description: Option<&str>,
@@ -242,13 +242,9 @@ impl<M: Model + Debug, T: ToolGroup> MultiStepAgent<M, T> {
             Some(desc) => desc.to_string(),
             None => "A multi-step agent that can solve tasks using a series of tools".to_string(),
         };
+        
         // let final_answer_tool = FinalAnswerTool::new();
         // tools.insert_tool(final_answer_tool);
-        // let mut tools: HashMap<String, Box<dyn Tool<Params = FinalAnswerToolParams>>> = tools
-        //     .into_iter()
-        //     .map(|tool| (tool.name().to_string(), tool))
-        //     .collect();
-        // tools.insert(final_answer_tool.name().to_string(), final_answer_tool);
 
         let mut agent = MultiStepAgent {
             model,
@@ -553,7 +549,7 @@ impl<M: Model + Debug, T: ToolGroup> Agent for FunctionCallingAgent<M, T> {
                     }
                     _ => {
                         step_log.tool_call = Some(tool.clone());
-        
+                        
                         info!(
                             "Executing tool call: {} with arguments: {:?}",
                             tool.function.name, tool.function.arguments
