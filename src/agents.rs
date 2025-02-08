@@ -1,5 +1,5 @@
 use crate::errors::AgentError;
-use crate::models::model_traits::{Model, ModelResponse};
+use crate::models::model_traits::Model;
 use crate::models::types::Message;
 use crate::models::types::MessageRole;
 use crate::prompts::{
@@ -301,6 +301,7 @@ impl<M: Model + Debug> MultiStepAgent<M> {
                 )?;
             }
         }
+        self.system_prompt_template = self.system_prompt_template.replace("{{current_time}}", &chrono::Local::now().to_string());
         Ok(self.system_prompt_template.clone())
     }
 

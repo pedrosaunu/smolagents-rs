@@ -88,7 +88,7 @@ impl OllamaModelBuilder {
     pub fn build(self) -> OllamaModel {
         OllamaModel {
             model_id: self.model_id,
-            temperature: self.temperature.unwrap_or(0.1),
+            temperature: self.temperature.unwrap_or(0.5),
             url: self.url.unwrap_or("http://localhost:11434".to_string()),
             client: self.client.unwrap_or_default(),
             ctx_length: self.ctx_length.unwrap_or(2048),
@@ -103,7 +103,7 @@ impl Model for OllamaModel {
         tools_to_call_from: Vec<Box<&dyn Tool>>,
         max_tokens: Option<usize>,
         _args: Option<HashMap<String, Vec<String>>>,
-    ) -> Result<impl ModelResponse, AgentError> {
+    ) -> Result<Box<dyn ModelResponse>, AgentError> {
         let messages = messages
             .iter()
             .map(|message| {
@@ -130,10 +130,10 @@ impl Model for OllamaModel {
             "tools": tools,
             "max_tokens": max_tokens.unwrap_or(1500),
         });
-        // println!("Body: {}", serde_json::to_string_pretty(&body.get("messages").unwrap()).unwrap());
+
         let response = self.client.post(format!("{}/api/chat", self.url)).json(&body).send().map_err(|e| {
             AgentError::Generation(format!("Failed to get response from Ollama: {}", e))
         })?;
-        Ok(response.json::<OllamaResponse>().unwrap())
+        Ok(Box::new(response.json::<OllamaResponse>().unwrap()))
     }
 }

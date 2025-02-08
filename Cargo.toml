@@ -13,7 +13,7 @@ log = "0.4"
 colored = "3.0.0"
 scraper = "0.22.0"
 terminal_size = "0.4.1"
-
+chrono = "0.4.39"
 [dev-dependencies]
 clap = { version = "4.5.1", features = ["derive"] }
 

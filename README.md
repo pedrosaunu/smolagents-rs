@@ -25,6 +25,7 @@ This is a rust implementation of HF [smolagents](https://github.com/huggingface/
 ### Models
 
 - [x] OpenAI Models (e.g., GPT-4, GPT-4 Turbo)
+- [x] Ollama Integration
 - [ ] Hugging Face API support
 - [ ] Open-source model integration via Candle
 - [ ] Light LLM integration 
@@ -91,8 +92,10 @@ Options:
   -t, --task <TASK>          The task to execute
   -a, --agent-type <TYPE>    Agent type [default: function-calling]
   -l, --tools <TOOLS>        Comma-separated list of tools [default: duckduckgo,visit-website]
-  -m, --model <MODEL>        OpenAI model ID [default: gpt-4-turbo]
-  -k, --api-key <KEY>        OpenAI API key (optional, will use env var)
+  -m, --model <TYPE>         Model type [default: open-ai]
+  -k, --api-key <KEY>        OpenAI API key (only required for OpenAI model)
+  --model-id <ID>            Model ID (e.g., "gpt-4" for OpenAI or "qwen2.5" for Ollama) [default: gpt-4o-mini]
+  -u, --ollama-url <URL>     Ollama server URL [default: http://localhost:11434]
   -s, --stream               Enable streaming output
   -h, --help                 Print help
 ```
