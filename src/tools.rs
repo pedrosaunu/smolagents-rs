@@ -45,7 +45,7 @@ pub struct ToolFunctionInfo {
 }
 
 impl ToolInfo {
-    pub fn new<P: Parameters, T: Tool>(tool: &T) -> Self {
+    pub fn new<P: Parameters, T: AnyTool>(tool: &T) -> Self {
         let mut settings = SchemaSettings::draft07();
         settings.inline_subschemas = true;
         let generator = settings.into_generator();
@@ -72,20 +72,19 @@ pub trait ToolGroup: Debug {
     fn tool_info(&self) -> Vec<ToolInfo>;
 }
 
-impl<T: Tool<Params = P>, P: Parameters> ToolGroup for Vec<T> {
+impl ToolGroup for Vec<Box<dyn AnyTool>> {
     fn call(&self, arguments: &FunctionCall) -> Result<String> {
         let tool = self.iter().find(|tool| tool.name() == arguments.name);
         if let Some(tool) = tool {
             let p = arguments.arguments.clone();
             println!("arguments: {:?}", p);
-            let params: P = serde_json::from_value(p.clone())
-                .or_else(|_| serde_json::from_str(&p.to_string())).unwrap();
-            return tool.forward(params);
+
+            return tool.forward_json(p);
         }
         Err(anyhow::anyhow!("Tool not found"))
     }
     fn tool_info(&self) -> Vec<ToolInfo> {
-        self.iter().map(|tool| ToolInfo::new::<T::Params, T>(tool)).collect()
+        self.iter().map(|tool| tool.tool_info()).collect()
     }
 
 }
@@ -568,6 +567,48 @@ impl Tool for DuckDuckGoSearchTool {
         Ok(json_string)
     }
 }
+
+pub trait AnyTool: Debug {
+    fn name(&self) -> &'static str;
+    fn description(&self) -> &'static str;
+    fn any_inputs(&self) -> &HashMap<&'static str, HashMap<&'static str, String>>;
+    fn any_output_type(&self) -> &'static str;
+    fn any_is_initialized(&self) -> bool;
+    fn forward_json(&self, json_args: serde_json::Value) -> Result<String>;
+    fn tool_info(&self) -> ToolInfo;
+}
+
+impl<T: Tool + 'static> AnyTool for T {
+    fn name(&self) -> &'static str {
+        Tool::name(self)
+    }
+    
+    fn description(&self) -> &'static str {
+        Tool::description(self)
+    }
+    
+    fn any_inputs(&self) -> &HashMap<&'static str, HashMap<&'static str, String>> {
+        Tool::inputs(self)
+    }
+    
+    fn any_output_type(&self) -> &'static str {
+        Tool::output_type(self)
+    }
+    
+    fn any_is_initialized(&self) -> bool {
+        Tool::is_initialized(self)
+    }
+    
+    fn forward_json(&self, json_args: serde_json::Value) -> Result<String> {
+        let params = serde_json::from_value::<T::Params>(json_args)?;
+        Tool::forward(self, params)
+    }
+
+    fn tool_info(&self) -> ToolInfo {
+        ToolInfo::new::<T::Params, T>(self)
+    }
+}
+
 
 #[cfg(test)]
 mod tests {

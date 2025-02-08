@@ -5,7 +5,7 @@ use clap::{Parser, ValueEnum};
 use smolagents::agents::{Agent, FunctionCallingAgent};
 use smolagents::models::openai::OpenAIServerModel;
 use smolagents::models::ollama::OllamaModelBuilder;
-use smolagents::tools::{DuckDuckGoSearchTool, FinalAnswerTool, Tool, ToolGroup, ToolInfo, VisitWebsiteTool};
+use smolagents::tools::{AnyTool, DuckDuckGoSearchTool, FinalAnswerTool, Parameters, Tool, ToolGroup, ToolInfo, VisitWebsiteTool};
 
 #[derive(Debug, Clone, ValueEnum)]
 enum AgentType {
@@ -51,13 +51,13 @@ fn main() -> Result<()> {
 
 
     // Create tools
-    let tools = vec![Box::new(FinalAnswerTool::new()), Box::new(DuckDuckGoSearchTool::new())];
+    let tools: Vec<Box<dyn AnyTool>> = vec![Box::new(FinalAnswerTool::new()), Box::new(DuckDuckGoSearchTool::new())];
 
     println!("{:?}", serde_json::to_string_pretty(&FinalAnswerTool::new()));
     // Create model
-    let model = OpenAIServerModel::new(args.model.as_deref(), None, args.api_key);
+    // let model = OpenAIServerModel::new(args.model.as_deref(), None, args.api_key);
 
-    // let model = OllamaModelBuilder::new().model_id("llama3.2").build();
+    let model = OllamaModelBuilder::new().model_id("qwen2.5").build();
 
     // Create agent based on type
     let mut agent = match args.agent_type {
