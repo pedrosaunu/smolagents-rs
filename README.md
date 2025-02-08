@@ -1,6 +1,6 @@
 # 🤖 smolagents-rs
 
-This is a rust implementation of HF ![smolagents](https://github.com/huggingface/smolagents) library. It provides a powerful autonomous agent framework written in Rust that solves complex tasks using tools and LLM models. smolagents-rs combines cutting-edge technology with seamless integration to deliver robust and autonomous task execution.
+This is a rust implementation of HF [smolagents](https://github.com/huggingface/smolagents) library. It provides a powerful autonomous agent framework written in Rust that solves complex tasks using tools and LLM models. 
 
 ---
 
@@ -18,11 +18,14 @@ This is a rust implementation of HF ![smolagents](https://github.com/huggingface
 
 ---
 
+![demo](https://res.cloudinary.com/dltwftrgc/image/upload/v1737485304/smolagents-small_fmaikq.gif)
+
 ## ✅ Feature Checklist
 
 ### Models
 
 - [x] OpenAI Models (e.g., GPT-4, GPT-4 Turbo)
+- [x] Ollama Integration
 - [ ] Hugging Face API support
 - [ ] Open-source model integration via Candle
 - [ ] Light LLM integration 
@@ -89,8 +92,10 @@ Options:
   -t, --task <TASK>          The task to execute
   -a, --agent-type <TYPE>    Agent type [default: function-calling]
   -l, --tools <TOOLS>        Comma-separated list of tools [default: duckduckgo,visit-website]
-  -m, --model <MODEL>        OpenAI model ID [default: gpt-4-turbo]
-  -k, --api-key <KEY>        OpenAI API key (optional, will use env var)
+  -m, --model <TYPE>         Model type [default: open-ai]
+  -k, --api-key <KEY>        OpenAI API key (only required for OpenAI model)
+  --model-id <ID>            Model ID (e.g., "gpt-4" for OpenAI or "qwen2.5" for Ollama) [default: gpt-4o-mini]
+  -u, --ollama-url <URL>     Ollama server URL [default: http://localhost:11434]
   -s, --stream               Enable streaming output
   -h, --help                 Print help
 ```
@@ -133,10 +138,7 @@ The project follows a modular architecture with the following components:
 
 ---
 
-
-Here are some compelling reasons to develop and use smolagents-rs in Rust, which can be added as a new section to your README:
-
-## 🚀 Why Rust?
+## 🚀 Why port to Rust?
 Rust provides critical advantages that make it the ideal choice for smolagents-rs:
 
 1. ⚡ **High Performance**:<br>
@@ -151,11 +153,7 @@ Fearless concurrency through the ownership system enable smolagents-rs to effici
 4. 💻 **Universal Deployment**:<br>
 Compile once, run anywhere - from high-performance servers to WebAssembly in browsers. This allows smolagents-rs to run natively on any platform or be embedded in web applications with near-native performance.
 
-
-
-## 📝 License
-
-This project is licensed under the MIT License.
+Apart from this, its essential to push new technologies around agentic systems to the Rust ecoystem and this library aims to do so. 
 
 ---
 

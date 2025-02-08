@@ -3,14 +3,12 @@ use htmd::HtmlToMarkdown;
 use reqwest::Url;
 use schemars::gen::SchemaSettings;
 use schemars::schema::RootSchema;
+use schemars::JsonSchema;
 use scraper::Selector;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::any::Any;
-use std::collections::HashMap;
 use std::fmt::Debug;
-use schemars::JsonSchema;
 
 use crate::models::openai::FunctionCall;
 pub trait Parameters: DeserializeOwned + JsonSchema {}
@@ -18,9 +16,6 @@ pub trait Tool: Debug {
     type Params: Parameters;
     fn name(&self) -> &'static str;
     fn description(&self) -> &'static str;
-    fn inputs(&self) -> &HashMap<&'static str, HashMap<&'static str, String>>;
-    fn output_type(&self) -> &'static str;
-    fn is_initialized(&self) -> bool;
     fn forward(&self, arguments: Self::Params) -> Result<String>;
 }
 
@@ -30,7 +25,7 @@ pub enum ToolType {
     Function,
 }
 
-#[derive( Serialize, Debug)]
+#[derive(Serialize, Debug)]
 pub struct ToolInfo {
     #[serde(rename = "type")]
     tool_type: ToolType,
@@ -40,8 +35,8 @@ pub struct ToolInfo {
 #[derive(Serialize, Debug)]
 pub struct ToolFunctionInfo {
     pub name: &'static str,
-    description: &'static str,
-    parameters: RootSchema,
+    pub description: &'static str,
+    pub parameters: RootSchema,
 }
 
 impl ToolInfo {
@@ -77,8 +72,6 @@ impl ToolGroup for Vec<Box<dyn AnyTool>> {
         let tool = self.iter().find(|tool| tool.name() == arguments.name);
         if let Some(tool) = tool {
             let p = arguments.arguments.clone();
-            println!("arguments: {:?}", p);
-
             return tool.forward_json(p);
         }
         Err(anyhow::anyhow!("Tool not found"))
@@ -86,25 +79,21 @@ impl ToolGroup for Vec<Box<dyn AnyTool>> {
     fn tool_info(&self) -> Vec<ToolInfo> {
         self.iter().map(|tool| tool.tool_info()).collect()
     }
-
 }
 
 #[derive(Deserialize, JsonSchema)]
 #[schemars(title = "BaseParams")]
 pub struct BaseParams {
     #[schemars(description = "The name of the tool")]
-    name: String,
+    _name: String,
 }
 
 impl<P: DeserializeOwned + JsonSchema> Parameters for P where P: JsonSchema {}
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Default)]
 pub struct BaseTool {
     pub name: &'static str,
     pub description: &'static str,
-    pub inputs: HashMap<&'static str, HashMap<&'static str, String>>,
-    pub output_type: &'static str,
-    pub is_initialized: bool,
 }
 
 impl Tool for BaseTool {
@@ -116,30 +105,13 @@ impl Tool for BaseTool {
     fn description(&self) -> &'static str {
         self.description
     }
-
-    fn inputs(&self) -> &HashMap<&'static str, HashMap<&'static str, String>> {
-        &self.inputs
-    }
-
-    fn output_type(&self) -> &'static str {
-        self.output_type
-    }
-
-    fn is_initialized(&self) -> bool {
-        self.is_initialized
-    }
     fn forward(&self, _arguments: serde_json::Value) -> Result<String> {
         Ok("Not implemented".to_string())
     }
 }
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Default)]
 pub struct VisitWebsiteTool {
     pub tool: BaseTool,
-}
-impl Default for VisitWebsiteTool {
-    fn default() -> Self {
-        VisitWebsiteTool::new()
-    }
 }
 
 impl VisitWebsiteTool {
@@ -148,15 +120,6 @@ impl VisitWebsiteTool {
             tool: BaseTool {
                 name: "visit_website",
                 description: "Visits a webpage at the given url and reads its content as a markdown string. Use this to browse webpages",
-                inputs: HashMap::from([
-                    ("url", HashMap::from([
-                        ("type", "string".to_string()),
-                        ("description", "url of the webpage to visit".to_string()),
-                        ("required", "true".to_string()),
-                    ])),
-                ]),
-                output_type: "string",
-                is_initialized: false,
             },
         }
     }
@@ -166,6 +129,10 @@ impl VisitWebsiteTool {
             .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
             .build()
             .unwrap_or_else(|_| reqwest::blocking::Client::new());
+        let url = match Url::parse(url) {
+            Ok(url) => url,
+            Err(_) => Url::parse(&format!("https://{}", url)).unwrap(),
+        };
 
         let response = client.get(url).send();
 
@@ -213,56 +180,30 @@ impl Tool for VisitWebsiteTool {
         self.tool.description
     }
 
-    fn inputs(&self) -> &HashMap<&'static str, HashMap<&'static str, String>> {
-        self.tool.inputs()
-    }
-
-    fn output_type(&self) -> &'static str {
-        self.tool.output_type()
-    }
-
-    fn is_initialized(&self) -> bool {
-        self.tool.is_initialized()
-    }
-
     fn forward(&self, arguments: VisitWebsiteToolParams) -> Result<String> {
         let url = arguments.url;
         Ok(self.forward(&url))
     }
 }
 
-#[derive(Debug,Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(title = "FinalAnswerToolParams")]
 pub struct FinalAnswerToolParams {
     #[schemars(description = "The final answer to the problem")]
     answer: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Default)]
 pub struct FinalAnswerTool {
     pub tool: BaseTool,
 }
-impl Default for FinalAnswerTool {
-    fn default() -> Self {
-        FinalAnswerTool::new()
-    }
-}
+
 impl FinalAnswerTool {
     pub fn new() -> Self {
         FinalAnswerTool {
             tool: BaseTool {
                 name: "final_answer",
                 description: "Provides a final answer to the given problem.",
-                inputs: HashMap::from([(
-                    "answer",
-                    HashMap::from([
-                        ("type", "string".to_string()),
-                        ("description", "The final answer to the problem".to_string()),
-                        ("required", "true".to_string()),
-                    ]),
-                )]),
-                output_type: "string",
-                is_initialized: false,
             },
         }
     }
@@ -275,15 +216,6 @@ impl Tool for FinalAnswerTool {
     }
     fn description(&self) -> &'static str {
         self.tool.description
-    }
-    fn inputs(&self) -> &HashMap<&'static str, HashMap<&'static str, String>> {
-        self.tool.inputs()
-    }
-    fn output_type(&self) -> &'static str {
-        self.tool.output_type()
-    }
-    fn is_initialized(&self) -> bool {
-        self.tool.is_initialized()
     }
 
     fn forward(&self, arguments: FinalAnswerToolParams) -> Result<String> {
@@ -300,16 +232,10 @@ pub struct GoogleSearchToolParams {
     filter_year: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Default)]
 pub struct GoogleSearchTool {
     pub tool: BaseTool,
     pub api_key: String,
-}
-
-impl Default for GoogleSearchTool {
-    fn default() -> Self {
-        GoogleSearchTool::new(None)
-    }
 }
 
 impl GoogleSearchTool {
@@ -320,20 +246,6 @@ impl GoogleSearchTool {
             tool: BaseTool {
                 name: "google_search",
                 description: "Performs a google web search for your query then returns a string of the top search results.",
-                inputs: HashMap::from([
-                    ("query", HashMap::from([
-                        ("type", "string".to_string()),
-                        ("description", "The query to search for".to_string()),
-                        ("required", "true".to_string()),
-                    ])),
-                    ("filter_year", HashMap::from([
-                        ("type", "string".to_string()),
-                        ("description", "Optionally restrict results to a certain year".to_string()),
-                        ("required", "false".to_string())
-                    ])),
-                ]),
-                output_type: "string",
-                is_initialized: false,
             },
             api_key,
         }
@@ -341,17 +253,16 @@ impl GoogleSearchTool {
 
     fn forward(&self, query: &str, filter_year: Option<&str>) -> String {
         let params = {
-            let mut params = HashMap::new();
-            params.insert("engine", "google".to_string());
-            params.insert("q", query.to_string());
-            params.insert("api_key", self.api_key.clone());
-            params.insert("google_domain", "google.com".to_string());
+
+            let mut params = json!({
+                "engine": "google",
+                "q": query,
+                "api_key": self.api_key,
+                "google_domain": "google.com",
+            });
 
             if let Some(year) = filter_year {
-                params.insert(
-                    "tbs",
-                    format!("cdr:1,cd_min:01/01/{},cd_max:12/31/{}", year, year),
-                );
+                params["tbs"] = json!(format!("cdr:1,cd_min:01/01/{},cd_max:12/31/{}", year, year));
             }
 
             params
@@ -433,15 +344,6 @@ impl Tool for GoogleSearchTool {
     fn description(&self) -> &'static str {
         self.tool.description
     }
-    fn inputs(&self) -> &HashMap<&'static str, HashMap<&'static str, String>> {
-        self.tool.inputs()
-    }
-    fn output_type(&self) -> &'static str {
-        self.tool.output_type()
-    }
-    fn is_initialized(&self) -> bool {
-        self.tool.is_initialized()
-    }
 
     fn forward(&self, arguments: GoogleSearchToolParams) -> Result<String> {
         let query = arguments.query;
@@ -457,14 +359,14 @@ pub struct DuckDuckGoSearchToolParams {
     query: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Default)]
 pub struct SearchResult {
     pub title: String,
     pub snippet: String,
     pub url: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Default)]
 pub struct DuckDuckGoSearchTool {
     pub tool: BaseTool,
 }
@@ -475,15 +377,6 @@ impl DuckDuckGoSearchTool {
             tool: BaseTool {
                 name: "duckduckgo_search",
                 description: "Performs a duckduckgo web search for your query then returns a string of the top search results.",
-                inputs: HashMap::from([
-                    ("query", HashMap::from([
-                        ("type", "string".to_string()),
-                        ("description", "The query to search for".to_string()),
-                        ("required", "true".to_string()),
-                    ])),
-                ]),
-                output_type: "string",
-                is_initialized: false,
             },
         }
     }
@@ -551,15 +444,6 @@ impl Tool for DuckDuckGoSearchTool {
     fn description(&self) -> &'static str {
         self.tool.description
     }
-    fn inputs(&self) -> &HashMap<&'static str, HashMap<&'static str, String>> {
-        self.tool.inputs()
-    }
-    fn output_type(&self) -> &'static str {
-        self.tool.output_type()
-    }
-    fn is_initialized(&self) -> bool {
-        self.tool.is_initialized()
-    }
     fn forward(&self, arguments: DuckDuckGoSearchToolParams) -> Result<String> {
         let query = arguments.query;
         let results = self.forward(&query)?;
@@ -571,9 +455,6 @@ impl Tool for DuckDuckGoSearchTool {
 pub trait AnyTool: Debug {
     fn name(&self) -> &'static str;
     fn description(&self) -> &'static str;
-    fn any_inputs(&self) -> &HashMap<&'static str, HashMap<&'static str, String>>;
-    fn any_output_type(&self) -> &'static str;
-    fn any_is_initialized(&self) -> bool;
     fn forward_json(&self, json_args: serde_json::Value) -> Result<String>;
     fn tool_info(&self) -> ToolInfo;
 }
@@ -582,23 +463,11 @@ impl<T: Tool + 'static> AnyTool for T {
     fn name(&self) -> &'static str {
         Tool::name(self)
     }
-    
+
     fn description(&self) -> &'static str {
         Tool::description(self)
     }
-    
-    fn any_inputs(&self) -> &HashMap<&'static str, HashMap<&'static str, String>> {
-        Tool::inputs(self)
-    }
-    
-    fn any_output_type(&self) -> &'static str {
-        Tool::output_type(self)
-    }
-    
-    fn any_is_initialized(&self) -> bool {
-        Tool::is_initialized(self)
-    }
-    
+
     fn forward_json(&self, json_args: serde_json::Value) -> Result<String> {
         let params = serde_json::from_value::<T::Params>(json_args)?;
         Tool::forward(self, params)
@@ -609,7 +478,6 @@ impl<T: Tool + 'static> AnyTool for T {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -617,7 +485,7 @@ mod tests {
     #[test]
     fn test_visit_website_tool() {
         let tool = VisitWebsiteTool::new();
-        let url = "https://www.rust-lang.org/";
+        let url = "www.rust-lang.org/";
         let _result = tool.forward(&url);
     }
 

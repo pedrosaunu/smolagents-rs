@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::errors::AgentError;
 use crate::models::model_traits::{Model, ModelResponse};
 use crate::models::types::{Message, MessageRole};
-use crate::tools::{get_json_schema, Tool, ToolInfo};
+use crate::tools::ToolInfo;
 use anyhow::Result;
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
@@ -48,14 +48,14 @@ where
     D: serde::Deserializer<'de>,
 {
     let value = Value::deserialize(deserializer)?;
-    
+
     // If it's a string, try to parse it as JSON
     if let Value::String(s) = &value {
         if let Ok(parsed) = serde_json::from_str(s) {
             return Ok(parsed);
         }
     }
-    
+
     Ok(value)
 }
 
@@ -65,16 +65,18 @@ impl FunctionCall {
         if let Ok(map) = serde_json::from_value(self.arguments.clone()) {
             return Ok(map);
         }
-        
+
         // If that fails, try to parse as a string and then parse that string as JSON
         if let Value::String(arg_str) = &self.arguments {
             if let Ok(parsed) = serde_json::from_str(arg_str) {
                 return Ok(parsed);
             }
         }
-        
+
         // If all parsing attempts fail, return the original error
-        Err(anyhow::anyhow!("Failed to parse arguments as HashMap or JSON string"))
+        Err(anyhow::anyhow!(
+            "Failed to parse arguments as HashMap or JSON string"
+        ))
     }
 }
 
@@ -135,7 +137,7 @@ impl Model for OpenAIServerModel {
         tools_to_call_from: Vec<ToolInfo>,
         max_tokens: Option<usize>,
         args: Option<HashMap<String, Vec<String>>>,
-    ) -> Result<impl ModelResponse, AgentError> {
+    ) -> Result<Box<dyn ModelResponse>, AgentError> {
         let max_tokens = max_tokens.unwrap_or(1500);
         let messages = messages
             .iter()
@@ -148,8 +150,7 @@ impl Model for OpenAIServerModel {
             .collect::<Vec<_>>();
 
         // let tools = json!(tools_to_call_from);
-            
-        println!("tools: {:?}", tools_to_call_from);
+
         let mut body = json!({
             "model": self.model_id,
             "messages": messages,
@@ -177,7 +178,7 @@ impl Model for OpenAIServerModel {
             })?;
 
         match response.status() {
-            reqwest::StatusCode::OK => Ok(response.json::<OpenAIResponse>().unwrap()),
+            reqwest::StatusCode::OK => Ok(Box::new(response.json::<OpenAIResponse>().unwrap())),
             _ => Err(AgentError::Generation(format!(
                 "Failed to get response from OpenAI: {}",
                 response.text().unwrap()

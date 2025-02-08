@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{errors::AgentError, models::{openai::ToolCall, types::Message}, tools::{Tool, ToolGroup, ToolInfo}};
+use crate::{errors::AgentError, models::{openai::ToolCall, types::Message}, tools::ToolInfo};
 use anyhow::Result;
 pub trait ModelResponse {
     fn get_response(&self) -> Result<String>;
@@ -14,5 +14,5 @@ pub trait Model {
         tools: Vec<ToolInfo>,
         max_tokens: Option<usize>,
         args: Option<HashMap<String, Vec<String>>>,
-    ) -> Result<impl ModelResponse, AgentError>;
+    ) -> Result<Box<dyn ModelResponse>, AgentError>;
 }

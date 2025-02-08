@@ -1,23 +1,23 @@
 use crate::errors::AgentError;
-use crate::models::model_traits::{Model, ModelResponse};
-use crate::models::openai::{FunctionCall, ToolCall};
+use crate::models::model_traits::Model;
+use crate::models::openai::ToolCall;
 use crate::models::types::Message;
 use crate::models::types::MessageRole;
 use crate::prompts::{
     user_prompt_plan, FUNCTION_CALLING_SYSTEM_PROMPT, SYSTEM_PROMPT_FACTS, SYSTEM_PROMPT_PLAN,
 };
-use crate::tools::{AnyTool, FinalAnswerTool, FinalAnswerToolParams, ToolGroup, ToolInfo};
+use crate::tools::{AnyTool, FinalAnswerTool, ToolGroup, ToolInfo};
 use std::collections::HashMap;
 
 use crate::logger::LOGGER;
-use anyhow::{Error as E, Result};
+use anyhow::Result;
 use colored::Colorize;
 use log::info;
+use serde_json::json;
 
 const DEFAULT_TOOL_DESCRIPTION_TEMPLATE: &str = r#"
 {{ tool.name }}: {{ tool.description }}
     Takes inputs: {{tool.inputs}}
-    Returns an output of type: {{tool.output_type}}
 "#;
 
 use std::fmt::Debug;
@@ -27,16 +27,17 @@ pub fn get_tool_description_with_args(tool: &ToolInfo) -> String {
     description = description.replace("{{ tool.name }}", tool.function.name);
     description = description.replace(
         "{{ tool.description }}",
-        &serde_json::to_string(&tool).unwrap(),
+        tool.function.description,
     );
+    description = description.replace("{{tool.inputs}}", json!(&tool.function.parameters.schema)["properties"].to_string().as_str());
 
     description
 }
 
 pub fn get_tool_descriptions(tools: &[ToolInfo]) -> Vec<String> {
     tools
-        .into_iter()
-        .map(|tool| get_tool_description_with_args(&tool))
+        .iter()
+        .map(get_tool_description_with_args)
         .collect()
 }
 pub fn format_prompt_with_tools(tools: Vec<ToolInfo>, prompt_template: &str) -> String {
@@ -73,10 +74,6 @@ pub fn format_prompt_with_managed_agent_description(
 ) -> Result<String> {
     let agent_descriptions_placeholder =
         agent_descriptions_placeholder.unwrap_or("{{managed_agents_descriptions}}");
-
-    if !prompt_template.contains(agent_descriptions_placeholder) {
-        return Err(E::msg("The prompt template does not contain the placeholder for the managed agents descriptions"));
-    }
 
     if managed_agents.keys().len() > 0 {
         Ok(prompt_template.replace(
@@ -228,7 +225,7 @@ impl<M: Model + Debug> Agent for MultiStepAgent<M> {
 impl<M: Model + Debug> MultiStepAgent<M> {
     pub fn new(
         model: M,
-        tools: Vec<Box<dyn AnyTool>>,
+        mut tools: Vec<Box<dyn AnyTool>>,
         system_prompt: Option<&str>,
         managed_agents: Option<HashMap<String, Box<dyn Agent>>>,
         description: Option<&str>,
@@ -249,8 +246,8 @@ impl<M: Model + Debug> MultiStepAgent<M> {
             None => "A multi-step agent that can solve tasks using a series of tools".to_string(),
         };
 
-        // let final_answer_tool = FinalAnswerTool::new();
-        // tools.insert_tool(final_answer_tool);
+        let final_answer_tool = FinalAnswerTool::new();
+        tools.push(Box::new(final_answer_tool));
 
         let mut agent = MultiStepAgent {
             model,
@@ -289,6 +286,9 @@ impl<M: Model + Debug> MultiStepAgent<M> {
                 )?;
             }
         }
+        self.system_prompt_template = self
+            .system_prompt_template
+            .replace("{{current_time}}", &chrono::Local::now().to_string());
         Ok(self.system_prompt_template.clone())
     }
 
@@ -519,7 +519,12 @@ impl<M: Model + Debug> Agent for FunctionCallingAgent<M> {
                 let agent_memory = self.base_agent.write_inner_memory_from_logs(None);
                 self.base_agent.input_messages = Some(agent_memory.clone());
                 step_log.agent_memory = Some(agent_memory.clone());
-                let tools = self.base_agent.tools.iter().map(|tool| tool.tool_info()).collect::<Vec<_>>();
+                let tools = self
+                    .base_agent
+                    .tools
+                    .iter()
+                    .map(|tool| tool.tool_info())
+                    .collect::<Vec<_>>();
                 let model_message = self
                     .base_agent
                     .model
@@ -534,58 +539,50 @@ impl<M: Model + Debug> Agent for FunctionCallingAgent<M> {
                     )
                     .unwrap();
 
-                match model_message.get_response() {
-                    Ok(response) => {
-                        if !response.trim().is_empty() {
-                            return Ok(Some(response));
-                        }
+                if let Ok(response) = model_message.get_response() {
+                    if !response.trim().is_empty() {
+                        return Ok(Some(response));
                     }
-                    Err(_) => {}
                 }
 
-                let tool = model_message
-                    .get_tools_used()
-                    .unwrap()
-                    .first()
-                    .unwrap()
-                    .clone();
-                // let tool_name = tool_names.first().unwrap().clone().function.name;
-                // let tool_args = model_message
-                //     .get_tools_used()
-                //     .unwrap()
-                //     .first()
-                //     .unwrap()
-                //     .function
-                //     .get_arguments()
-                //     .unwrap();
-                // let tool_call_id = model_message
-                //     .get_tools_used()
-                //     .unwrap()
-                //     .first()
-                //     .unwrap()
-                //     .id
-                //     .clone();
-                match tool.function.name.as_str() {
+                let tool_names = model_message.get_tools_used().unwrap();
+                let tool_name = tool_names.first().unwrap().clone().function.name;
+
+                match tool_name.as_str() {
                     "final_answer" => {
-                        info!("Executing tool call: {}", tool.function.name);
-                        let answer = self.base_agent.tools.call(&tool.function);
+                        info!("Executing tool call: {}", tool_name);
+                        let answer = self
+                            .base_agent
+                            .tools
+                            .call(&tool_names.first().unwrap().function);
                         Ok(Some(answer.unwrap()))
                     }
                     _ => {
-                        step_log.tool_call = Some(tool.clone());
+                        step_log.tool_call = Some(tool_names.first().unwrap().clone());
 
                         info!(
                             "Executing tool call: {} with arguments: {:?}",
-                            tool.function.name, tool.function.arguments
+                            tool_name,
+                            tool_names.first().unwrap().function.arguments
                         );
-                        let observation = self.base_agent.tools.call(&tool.function).unwrap();
-                        step_log.observations = Some(observation.clone());
-                        info!("Observation: {}", observation);
+                        let observation = self
+                            .base_agent
+                            .tools
+                            .call(&tool_names.first().unwrap().function);
+                        match observation {
+                            Ok(observation) => {
+                                step_log.observations = Some(observation.clone());
+                                info!("Observation: {}", observation);
+                            }
+                            Err(e) => {
+                                step_log.error = Some(AgentError::Execution(e.to_string()));
+                                info!("Error: {}", e);
+                            }
+                        }
                         Ok(None)
                     }
                 }
             }
-
             _ => {
                 todo!()
             }
