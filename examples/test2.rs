@@ -9,7 +9,7 @@ use rustpython_parser::{
     Parse,
 };
 use serde_json::{self, json};
-use smolagents::tools::{AnyTool, DuckDuckGoSearchTool, Tool, VisitWebsiteTool};
+use smolagents::tools::{AnyTool, DuckDuckGoSearchTool, VisitWebsiteTool};
 use std::{any::Any, collections::HashMap, fmt};
 
 // Custom error type for interpreter

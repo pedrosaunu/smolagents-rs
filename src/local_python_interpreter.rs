@@ -2,7 +2,6 @@ use crate::tools::AnyTool;
 use anyhow::Result;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule, PyTuple};
-use rustpython_parser::ast::ExprConstant;
 use rustpython_parser::{
     ast::{
         self,
@@ -145,7 +144,6 @@ impl CustomConstant {
                     result.push_str(&CustomConstant::from(item.clone()).str().unwrap_or_default());
                 }
                 result.push(']');
-                println!("Tuple result: {:?}", result);
                 Some(result)
             }
             _ => None,
@@ -282,10 +280,8 @@ pub fn setup_static_tools(
             let arg_names: Vec<String> = (0..args.len()).map(|i| format!("arg{}", i)).collect();
             let func_path = static_tools.get(func).unwrap_or(&"builtins.float");
             let expr = format!("{}({})", func_path, arg_names.join(","));
-            println!("Evaluating: {}", expr);
 
             let result = py.eval(&expr, None, Some(locals))?;
-            println!("Result: {:?}", result);
             // Handle different return types
             if let Ok(float_val) = result.extract::<f64>() {
                 Ok(CustomConstant::Float(float_val))
@@ -326,7 +322,6 @@ fn evaluate_ast(
     for node in ast.iter() {
         match node {
             Stmt::FunctionDef(func) => {
-                println!("Function: {:?}", func.name);
                 return Ok(CustomConstant::Str(format!("Function: {:?}", func.name)));
             }
             Stmt::Expr(expr) => {
@@ -334,10 +329,8 @@ fn evaluate_ast(
                 return Ok(result);
             }
             Stmt::For(for_stmt) => {
-                println!("For: {:?}", for_stmt.iter);
                 let iter =
                     evaluate_expr(&for_stmt.iter.clone(), state, static_tools, custom_tools)?;
-                println!("Iter: {:?}", iter);
                 // Convert PyObj iterator into a vector of values
                 let values = match iter {
                     CustomConstant::PyObj(obj) => {
@@ -399,6 +392,7 @@ fn evaluate_ast(
                                 ))
                             }
                         }
+                        // evaluate_ast(stmt, state, static_tools, custom_tools)?;
                     }
                 }
                 return Ok(for_loop_result);
@@ -552,6 +546,27 @@ fn evaluate_expr(
                 }
             }
             if func == "print" {
+                match state.get_mut("print_logs") {
+                    Some(logs) => {
+                        println!("Logs: {:?}", logs.downcast_ref::<Vec<String>>().unwrap());
+                        logs.downcast_mut::<Vec<String>>().unwrap().push(
+                            args.iter()
+                                .map(|c| c.str().unwrap())
+                                .collect::<Vec<String>>()
+                                .join(" "),
+                        );
+                    }
+                    None => {
+                        state.insert(
+                            "print_logs".to_string(),
+                            Box::new(
+                                args.iter()
+                                    .map(|c| c.str().unwrap())
+                                    .collect::<Vec<String>>(),
+                            ),
+                        );
+                    }
+                }
                 return Ok(CustomConstant::Str(
                     args.iter()
                         .map(|c| c.str().unwrap())
@@ -565,12 +580,8 @@ fn evaluate_expr(
                     static_tools[&func](args.iter().map(|c| Constant::from(c.clone())).collect());
                 match result.as_ref() {
                     Ok(result) => match result {
-                        CustomConstant::Str(s) => {
-                            println!("Result: {}", s);
-                        }
-                        _ => {
-                            println!("Result: {:?}", result);
-                        }
+                        CustomConstant::Str(_) => {}
+                        _ => {}
                     },
                     Err(e) => {
                         println!("Error: {:?}", e);
@@ -790,112 +801,81 @@ fn evaluate_expr(
                 .unwrap(),
         )),
         ast::Expr::Subscript(subscript) => {
-            if let ast::Expr::Slice(constant) = &*subscript.slice {
-                let slice_values = evaluate_expr(&subscript.slice, state, static_tools, custom_tools)?;
-                let (start, end, step) = match slice_values.clone() {
-                    CustomConstant::Tuple(t) => {
-                        let start = convert_bigint_to_i64(&t[0].clone().int().unwrap());
-                        let end = convert_bigint_to_i64(&t[1].clone().int().unwrap());
-                        let step = convert_bigint_to_i64(&t[2].clone().int().unwrap());
-                        (start, end, step)
-                    }
-                    _ => panic!("Expected tuple"),
-                };
-                let value = match slice_values {
-                    CustomConstant::Tuple(t) => {
-                        let value = evaluate_expr(&subscript.value, state, static_tools, custom_tools)?;
-                        let value = match value {
-                            CustomConstant::Tuple(t) => {
-                                if step < 0 {
-                                    t.iter()
-                                        .rev()
-                                        .skip((t.len() - start as usize - 1) as usize)
-                                        .take((start - end) as usize)
-                                        .step_by((-step) as usize)
-                                        .map(|c| c.clone())
-                                        .collect::<Vec<Constant>>()
-                                } else {
-                                    t.iter()
-                                        .skip(start as usize)
-                                        .take((end - start) as usize)
-                                        .step_by(step as usize)
-                                        .map(|c| c.clone())
-                                        .collect::<Vec<Constant>>()
-                                }
-                            }
-                            _ => panic!("Expected tuple"),
-                        };
-                        value
-                    }
-                    CustomConstant::Str(s) => {
-                        if step < 0 {
-                            s.chars()
-                                .rev()
-                                .skip((s.chars().count() - start as usize - 1) as usize)
-                                .take((start - end) as usize)
-                                .step_by((-step) as usize)
-                                .map(|c| Constant::Str(c.to_string()))
-                                .collect::<Vec<Constant>>()
-                        } else {
-                            s.chars()
-                                .skip(start as usize)
-                                .take((end - start) as usize)
-                                .step_by(step as usize)
-                                .map(|c| Constant::Str(c.to_string()))
-                                .collect::<Vec<Constant>>()
-                        }
-                    }
-                    _ => panic!("Expected tuple or string"),
-                };
-                return Ok(CustomConstant::Tuple(value));
-            }
+            let result = Python::with_gil(|py| {
+                // Get the value being subscripted (e.g., the list/string)
+                let value = evaluate_expr(&subscript.value, state, static_tools, custom_tools)?;
+                let value_obj = value.into_py(py);
 
-            let index = evaluate_expr(&subscript.slice, state, static_tools, custom_tools)?;
-            let index = match index {
-                CustomConstant::Int(i) => i,
-                _ => panic!("Expected int"),
-            };
-            let value = evaluate_expr(&subscript.value, state, static_tools, custom_tools)?;
-            let value = match value {
-                CustomConstant::Tuple(t) => {
-                    let index = convert_bigint_to_i64(&index);
-                    if index >= t.len() as i64 || -index > t.len() as i64 {
-                        return Err(InterpreterError::RuntimeError(format!(
-                            "Index out of bounds: {}. There are only {} elements in the tuple.",
-                            index,
-                            t.len()
-                        )));
-                    }
-                    if index < 0 {
-                        t.iter().rev().nth(-index as usize - 1).unwrap().clone()
-                    } else {
-                        t[index as usize].clone()
+                let slice = Constant::from(evaluate_expr(
+                    &subscript.slice,
+                    state,
+                    static_tools,
+                    custom_tools,
+                )?);
+                if let Constant::Int(i) = slice {
+                    let index = convert_bigint_to_i64(&i);
+                    let result = value_obj.as_ref(py).get_item(index);
+                    match result {
+                        Ok(result) => return extract_constant_from_pyobject(result, py),
+                        Err(e) => return Err(InterpreterError::RuntimeError(e.to_string())),
                     }
                 }
-                CustomConstant::Str(s) => {
-                    let index = convert_bigint_to_i64(&index);
-                    let length = s.chars().count();
-                    if index >= length as i64 || -index > length as i64 {
-                        return Err(InterpreterError::RuntimeError(format!(
-                            "Index out of bounds: {}. There are only {} characters in the string.",
-                            index, length
-                        )));
+
+                // Handle both simple indexing and slicing
+                let result = match &*subscript.slice {
+                    // For slice operations like num[1:3:2]
+                    ast::Expr::Slice(slice) => {
+                        // let slice_values = evaluate_expr(&subscript.slice, state, static_tools, custom_tools)?;
+                        let start = match &slice.lower {
+                            Some(lower) => {
+                                evaluate_expr(&lower, state, static_tools, custom_tools)?.into()
+                            }
+                            None => None,
+                        };
+                        let start = match start {
+                            Some(start) => {
+                                Some(convert_bigint_to_i64(&Constant::from(start).int().unwrap()))
+                            }
+                            None => None,
+                        };
+                        let stop = match &slice.upper {
+                            Some(upper) => {
+                                evaluate_expr(&upper, state, static_tools, custom_tools)?.into()
+                            }
+                            None => None,
+                        };
+                        let stop = match stop {
+                            Some(stop) => {
+                                Some(convert_bigint_to_i64(&Constant::from(stop).int().unwrap()))
+                            }
+                            None => None,
+                        };
+                        let step = match &slice.step {
+                            Some(step) => {
+                                evaluate_expr(&step, state, static_tools, custom_tools)?.into()
+                            }
+                            None => None,
+                        };
+                        let step = match step {
+                            Some(step) => {
+                                Some(convert_bigint_to_i64(&Constant::from(step).int().unwrap()))
+                            }
+                            None => None,
+                        };
+                        let slice_obj = py
+                            .eval("slice", None, None)?
+                            .call1((start, stop, step))?
+                            .into_py(py);
+                        value_obj.as_ref(py).get_item(slice_obj).unwrap()
                     }
-                    if index < 0 {
-                        Constant::Str(
-                            s.chars()
-                                .rev()
-                                .nth(-index as usize - 1)
-                                .unwrap()
-                                .to_string(),
-                        )
-                    } else {
-                        Constant::Str(s.chars().nth(index as usize).unwrap().to_string())
-                    }
-                }
-                _ => panic!("Expected tuple or string"),
-            };
-            Ok(CustomConstant::from(value))
+                    _ => return Err(InterpreterError::RuntimeError("Invalid slice".to_string())),
+                };
+
+                // Convert the result back to our CustomConstant type
+                extract_constant_from_pyobject(&result, py)
+            });
+            println!("Result: {:?}", result);
+            result
         }
         ast::Expr::Slice(slice) => {
             let start = match &slice.lower {
@@ -910,23 +890,32 @@ fn evaluate_expr(
                 Some(step) => evaluate_expr(&step, state, static_tools, custom_tools)?.into(),
                 None => Constant::Int(BigInt::from(1)),
             };
-            // let start = match start {
-            //     CustomConstant::Int(i) => convert_bigint_to_i64(&i),
-            //     _ => panic!("Expected int"),
-            // };
-            // let end = match end {
-            //     CustomConstant::Int(i) => convert_bigint_to_i64(&i),
-            //     _ => panic!("Expected int"),
-            // };
-            // let step = match step {
-            //     CustomConstant::Int(i) => convert_bigint_to_i64(&i),
-            //     _ => panic!("Expected int"),
-            // };
             Ok(CustomConstant::Tuple(vec![start, end, step]))
         }
         _ => {
             panic!("Unsupported expression: {:?}", expr);
         }
+    }
+}
+
+fn extract_constant_from_pyobject(
+    obj: &PyAny,
+    py: Python<'_>,
+) -> Result<CustomConstant, InterpreterError> {
+    if let Ok(float_val) = obj.extract::<f64>() {
+        Ok(CustomConstant::Float(float_val))
+    } else if let Ok(string_val) = obj.extract::<String>() {
+        Ok(CustomConstant::Str(string_val))
+    } else if let Ok(bool_val) = obj.extract::<bool>() {
+        Ok(CustomConstant::Bool(bool_val))
+    } else if let Ok(int_val) = obj.extract::<i64>() {
+        Ok(CustomConstant::Int(BigInt::from(int_val)))
+    } else if let Ok(list_val) = obj.extract::<Vec<f64>>() {
+        Ok(CustomConstant::Tuple(
+            list_val.into_iter().map(|x| Constant::Float(x)).collect(),
+        ))
+    } else {
+        Ok(CustomConstant::PyObj(obj.into_py(py)))
     }
 }
 
@@ -964,7 +953,7 @@ impl LocalPythonInterpreter {
         &self,
         code: &str,
         state: &mut Option<HashMap<String, Box<dyn Any>>>,
-    ) -> Result<String, InterpreterError> {
+    ) -> Result<(String, String), InterpreterError> {
         let ast = ast::Suite::parse(code, "<embedded>")
             .map_err(|e| InterpreterError::SyntaxError(e.to_string()))?;
         println!("Tools: {:?}", self.custom_tools.keys());
@@ -974,8 +963,18 @@ impl LocalPythonInterpreter {
             &self.static_tools,
             &self.custom_tools,
         )?;
+
+        let mut empty_state = HashMap::new();
+        let mut empty_string = Vec::new();
+        let execution_logs = state
+            .as_mut()
+            .unwrap_or(&mut empty_state)
+            .get_mut("print_logs")
+            .and_then(|logs| logs.downcast_mut::<Vec<String>>())
+            .unwrap_or(&mut empty_string)
+            .join("\n");
         match result.str() {
-            Some(s) => Ok(s),
+            Some(s) => Ok((s, execution_logs.clone())),
             None => Err(InterpreterError::RuntimeError("No result".to_string())),
         }
     }
@@ -983,7 +982,7 @@ impl LocalPythonInterpreter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tools::FinalAnswerTool;
+    use crate::tools::{DuckDuckGoSearchTool, FinalAnswerTool};
     use std::collections::HashMap;
 
     #[test]
@@ -1059,7 +1058,7 @@ print(f"The letter 'r' appears {r_count} times in the word '{word}'.")"#;
         assert_eq!(
             result,
             Err(InterpreterError::RuntimeError(
-                "Index out of bounds: 10. There are only 10 characters in the string.".to_string()
+                "IndexError: string index out of range".to_string()
             ))
         );
 
@@ -1091,7 +1090,7 @@ print(f"The letter 'r' appears {r_count} times in the word '{word}'.")"#;
         assert_eq!(
             result,
             Err(InterpreterError::RuntimeError(
-                "Index out of bounds: -6. There are only 5 elements in the tuple.".to_string()
+                "IndexError: list index out of range".to_string()
             ))
         );
     }
@@ -1124,5 +1123,65 @@ print(f"The letter 'r' appears {r_count} times in the word '{word}'.")"#;
         let mut state = HashMap::new();
         let result = evaluate_python_code(&code, vec![], &mut state).unwrap();
         assert_eq!(result, "[6, 4]");
+
+        let code = textwrap::dedent(
+            r#"
+        word = 'strawberry'
+        print(word[::-1])"#,
+        );
+        let mut state = HashMap::new();
+        let result = evaluate_python_code(&code, vec![], &mut state).unwrap();
+        assert_eq!(result, "yrrebwarts");
+
+        let code = textwrap::dedent(
+            r#"
+        numbers = [1, 2, 3, 4, 5]
+        print(numbers[::-1])"#,
+        );
+        let mut state = HashMap::new();
+        let result = evaluate_python_code(&code, vec![], &mut state).unwrap();
+        assert_eq!(result, "[5, 4, 3, 2, 1]");
+    }
+
+    #[test]
+    fn test_for_loop() {
+        let code = textwrap::dedent(
+            r#"
+        for i in range(5):
+            print(i)
+        "#,
+        );
+        let mut state = HashMap::new();
+        let _ = evaluate_python_code(&code, vec![], &mut state).unwrap();
+        assert_eq!(
+            state
+                .get("print_logs")
+                .unwrap()
+                .downcast_ref::<Vec<String>>()
+                .unwrap(),
+            &vec!["0", "1", "2", "3", "4"]
+        );
+    }
+
+    #[test]
+    fn test_for_loop_with_tools() {
+        let code = textwrap::dedent(
+            r#"
+        for i in range(5):
+            search = duckduckgo_search(query=i)
+            print(search)
+        "#,
+        );
+        let mut state = HashMap::new();
+        let tools: Vec<Box<dyn AnyTool>> = vec![Box::new(DuckDuckGoSearchTool::new())];
+        let _ = evaluate_python_code(&code, tools, &mut state).unwrap();
+        // assert_eq!(
+        //     state
+        //         .get("print_logs")
+        //         .unwrap()
+        //         .downcast_ref::<Vec<String>>()
+        //         .unwrap(),
+        //     &vec!["0", "1", "2", "3", "4"]
+        // );
     }
 }

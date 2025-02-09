@@ -101,6 +101,7 @@ pub trait Agent {
     fn description(&self) -> String {
         "".to_string()
     }
+    fn model(&self) -> &dyn Model;
     fn step(&mut self, log_entry: &mut Step) -> Result<Option<String>>;
     fn direct_run(&mut self, _task: &str) -> Result<String> {
         let mut final_answer: Option<String> = None;
@@ -117,6 +118,10 @@ pub trait Agent {
             final_answer = self.step(&mut step_log)?;
             self.get_logs_mut().push(step_log);
             self.increment_step_number();
+        }
+
+        if final_answer.is_none() && self.get_step_number() >= self.get_max_steps() {
+            final_answer = self.provide_final_answer(_task)?;
         }
         info!(
             "Final answer: {}",
@@ -148,158 +153,28 @@ pub trait Agent {
             false => self.direct_run(task),
         }
     }
-}
+    fn provide_final_answer(&mut self, task: &str) -> Result<Option<String>> {
+        let mut input_messages = vec![Message {
+            role: MessageRole::System,
+            content: "An agent tried to answer a user query but it got stuck and failed to do so. You are tasked with providing an answer instead. Here is the agent's memory:".to_string(),
+        }];
 
-#[derive(Debug)]
-pub enum Step {
-    PlanningStep(String, String),
-    TaskStep(String),
-    SystemPromptStep(String),
-    ActionStep(AgentStep),
-    ToolCall(ToolCall),
-}
-
-#[derive(Debug, Clone)]
-pub struct AgentStep {
-    agent_memory: Option<Vec<Message>>,
-    llm_output: Option<String>,
-    tool_call: Option<ToolCall>,
-    error: Option<AgentError>,
-    observations: Option<String>,
-    _step: usize,
-}
-
-// #[derive(Debug, Clone)]
-// pub struct ToolCall {
-//     name: String,
-//     arguments: HashMap<String, String>,
-//     id: String,
-// }
-
-// Define a trait for the parent functionality
-
-pub struct MultiStepAgent<M: Model> {
-    pub model: M,
-    pub tools: Vec<Box<dyn AnyTool>>,
-    pub system_prompt_template: String,
-    pub name: &'static str,
-    pub managed_agents: Option<HashMap<String, Box<dyn Agent>>>,
-    pub description: String,
-    pub max_steps: usize,
-    pub step_number: usize,
-    pub task: String,
-    pub input_messages: Option<Vec<Message>>,
-    pub logs: Vec<Step>,
-}
-
-impl<M: Model + Debug> Agent for MultiStepAgent<M> {
-    fn name(&self) -> &'static str {
-        self.name
-    }
-    fn get_max_steps(&self) -> usize {
-        self.max_steps
-    }
-    fn get_step_number(&self) -> usize {
-        self.step_number
-    }
-    fn set_task(&mut self, task: &str) {
-        self.task = task.to_string();
-    }
-    fn get_system_prompt(&self) -> &str {
-        &self.system_prompt_template
-    }
-    fn increment_step_number(&mut self) {
-        self.step_number += 1;
-    }
-    fn get_logs_mut(&mut self) -> &mut Vec<Step> {
-        &mut self.logs
-    }
-    fn description(&self) -> String {
-        self.description.clone()
+        input_messages.extend(self.write_inner_memory_from_logs(Some(true))[1..].to_vec());
+        input_messages.push(Message {
+            role: MessageRole::User,
+            content: format!("Based on the above, please provide an answer to the following user request: \n```\n{}", task),
+        });
+        let response = self
+            .model()
+            .run(input_messages, vec![], None, None)?
+            .get_response()?;
+        Ok(Some(response))
     }
 
-    /// Perform one step in the ReAct framework: the agent thinks, acts, and observes the result.
-    ///
-    /// Returns None if the step is not final.
-    fn step(&mut self, _: &mut Step) -> Result<Option<String>> {
-        todo!()
-    }
-}
-
-impl<M: Model> MultiStepAgent<M> {
-    pub fn new(
-        model: M,
-        mut tools: Vec<Box<dyn AnyTool>>,
-        system_prompt: Option<&str>,
-        managed_agents: Option<HashMap<String, Box<dyn Agent>>>,
-        description: Option<&str>,
-        max_steps: Option<usize>,
-    ) -> Result<Self> {
-        // Initialize logger
-        log::set_logger(&LOGGER).unwrap();
-        log::set_max_level(log::LevelFilter::Info);
-
-        let name = "MultiStepAgent";
-
-        let system_prompt_template = match system_prompt {
-            Some(prompt) => prompt.to_string(),
-            None => FUNCTION_CALLING_SYSTEM_PROMPT.to_string(),
-        };
-        let description = match description {
-            Some(desc) => desc.to_string(),
-            None => "A multi-step agent that can solve tasks using a series of tools".to_string(),
-        };
-
-        let final_answer_tool = FinalAnswerTool::new();
-        tools.push(Box::new(final_answer_tool));
-
-        let mut agent = MultiStepAgent {
-            model,
-            tools,
-            system_prompt_template,
-            name,
-            managed_agents,
-            description,
-            max_steps: max_steps.unwrap_or(10),
-            step_number: 0,
-            task: "".to_string(),
-            logs: Vec::new(),
-            input_messages: None,
-        };
-
-        agent.initialize_system_prompt()?;
-        Ok(agent)
-    }
-
-    fn initialize_system_prompt(&mut self) -> Result<String> {
-        let tools = self.tools.tool_info();
-        self.system_prompt_template = format_prompt_with_tools(tools, &self.system_prompt_template);
-        match &self.managed_agents {
-            Some(managed_agents) => {
-                self.system_prompt_template = format_prompt_with_managed_agent_description(
-                    self.system_prompt_template.clone(),
-                    managed_agents,
-                    None,
-                )?;
-            }
-            None => {
-                self.system_prompt_template = format_prompt_with_managed_agent_description(
-                    self.system_prompt_template.clone(),
-                    &HashMap::new(),
-                    None,
-                )?;
-            }
-        }
-        self.system_prompt_template = self
-            .system_prompt_template
-            .replace("{{current_time}}", &chrono::Local::now().to_string());
-        Ok(self.system_prompt_template.clone())
-    }
-
-    pub fn write_inner_memory_from_logs(&self, summary_mode: Option<bool>) -> Vec<Message> {
+    fn write_inner_memory_from_logs(&mut self, summary_mode: Option<bool>) -> Vec<Message> {
         let mut memory = Vec::new();
         let summary_mode = summary_mode.unwrap_or(false);
-        for log in &self.logs {
+        for log in self.get_logs_mut() {
             match log {
                 Step::ToolCall(_) => {}
                 Step::PlanningStep(plan, facts) => {
@@ -381,6 +256,156 @@ impl<M: Model> MultiStepAgent<M> {
             }
         }
         memory
+    }
+}
+
+#[derive(Debug)]
+pub enum Step {
+    PlanningStep(String, String),
+    TaskStep(String),
+    SystemPromptStep(String),
+    ActionStep(AgentStep),
+    ToolCall(ToolCall),
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentStep {
+    agent_memory: Option<Vec<Message>>,
+    llm_output: Option<String>,
+    tool_call: Option<ToolCall>,
+    error: Option<AgentError>,
+    observations: Option<String>,
+    _step: usize,
+}
+
+// #[derive(Debug, Clone)]
+// pub struct ToolCall {
+//     name: String,
+//     arguments: HashMap<String, String>,
+//     id: String,
+// }
+
+// Define a trait for the parent functionality
+
+pub struct MultiStepAgent<M: Model> {
+    pub model: M,
+    pub tools: Vec<Box<dyn AnyTool>>,
+    pub system_prompt_template: String,
+    pub name: &'static str,
+    pub managed_agents: Option<HashMap<String, Box<dyn Agent>>>,
+    pub description: String,
+    pub max_steps: usize,
+    pub step_number: usize,
+    pub task: String,
+    pub input_messages: Option<Vec<Message>>,
+    pub logs: Vec<Step>,
+}
+
+impl<M: Model + Debug> Agent for MultiStepAgent<M> {
+    fn name(&self) -> &'static str {
+        self.name
+    }
+    fn get_max_steps(&self) -> usize {
+        self.max_steps
+    }
+    fn get_step_number(&self) -> usize {
+        self.step_number
+    }
+    fn set_task(&mut self, task: &str) {
+        self.task = task.to_string();
+    }
+    fn get_system_prompt(&self) -> &str {
+        &self.system_prompt_template
+    }
+    fn increment_step_number(&mut self) {
+        self.step_number += 1;
+    }
+    fn get_logs_mut(&mut self) -> &mut Vec<Step> {
+        &mut self.logs
+    }
+    fn description(&self) -> String {
+        self.description.clone()
+    }
+    fn model(&self) -> &dyn Model {
+        &self.model
+    }
+
+    /// Perform one step in the ReAct framework: the agent thinks, acts, and observes the result.
+    ///
+    /// Returns None if the step is not final.
+    fn step(&mut self, _: &mut Step) -> Result<Option<String>> {
+        todo!()
+    }
+}
+
+impl<M: Model> MultiStepAgent<M> {
+    pub fn new(
+        model: M,
+        mut tools: Vec<Box<dyn AnyTool>>,
+        system_prompt: Option<&str>,
+        managed_agents: Option<HashMap<String, Box<dyn Agent>>>,
+        description: Option<&str>,
+        max_steps: Option<usize>,
+    ) -> Result<Self> {
+        // Initialize logger
+        log::set_logger(&LOGGER).unwrap();
+        log::set_max_level(log::LevelFilter::Info);
+
+        let name = "MultiStepAgent";
+
+        let system_prompt_template = match system_prompt {
+            Some(prompt) => prompt.to_string(),
+            None => FUNCTION_CALLING_SYSTEM_PROMPT.to_string(),
+        };
+        let description = match description {
+            Some(desc) => desc.to_string(),
+            None => "A multi-step agent that can solve tasks using a series of tools".to_string(),
+        };
+
+        let final_answer_tool = FinalAnswerTool::new();
+        tools.push(Box::new(final_answer_tool));
+
+        let mut agent = MultiStepAgent {
+            model,
+            tools,
+            system_prompt_template,
+            name,
+            managed_agents,
+            description,
+            max_steps: max_steps.unwrap_or(10),
+            step_number: 0,
+            task: "".to_string(),
+            logs: Vec::new(),
+            input_messages: None,
+        };
+
+        agent.initialize_system_prompt()?;
+        Ok(agent)
+    }
+
+    fn initialize_system_prompt(&mut self) -> Result<String> {
+        let tools = self.tools.tool_info();
+        self.system_prompt_template = format_prompt_with_tools(tools, &self.system_prompt_template);
+        match &self.managed_agents {
+            Some(managed_agents) => {
+                self.system_prompt_template = format_prompt_with_managed_agent_description(
+                    self.system_prompt_template.clone(),
+                    managed_agents,
+                    None,
+                )?;
+            }
+            None => {
+                self.system_prompt_template = format_prompt_with_managed_agent_description(
+                    self.system_prompt_template.clone(),
+                    &HashMap::new(),
+                    None,
+                )?;
+            }
+        }
+        self.system_prompt_template = self
+            .system_prompt_template
+            .replace("{{current_time}}", &chrono::Local::now().to_string());
+        Ok(self.system_prompt_template.clone())
     }
 
     pub fn planning_step(&mut self, task: &str, is_first_step: bool, _step: usize) {
@@ -512,6 +537,9 @@ impl<M: Model + Debug> Agent for FunctionCallingAgent<M> {
     fn get_logs_mut(&mut self) -> &mut Vec<Step> {
         self.base_agent.get_logs_mut()
     }
+    fn model(&self) -> &dyn Model {
+        self.base_agent.model()
+    }
 
     /// Perform one step in the ReAct framework: the agent thinks, acts, and observes the result.
     ///
@@ -574,8 +602,9 @@ impl<M: Model + Debug> Agent for FunctionCallingAgent<M> {
                             .call(&tool_names.first().unwrap().function);
                         match observation {
                             Ok(observation) => {
-                                step_log.observations = Some(observation.clone());
-                                info!("Observation: {}", observation);
+                                step_log.observations =
+                                    Some(observation.chars().take(3000).collect::<String>());
+                                info!("Observation: {}", observation.trim());
                             }
                             Err(e) => {
                                 step_log.error = Some(AgentError::Execution(e.to_string()));
@@ -654,6 +683,9 @@ impl<M: Model + Debug> Agent for CodeAgent<M> {
     fn get_system_prompt(&self) -> &str {
         self.base_agent.get_system_prompt()
     }
+    fn model(&self) -> &dyn Model {
+        self.base_agent.model()
+    }
     fn step(&mut self, log_entry: &mut Step) -> Result<Option<String>> {
         match log_entry {
             Step::ActionStep(step_log) => {
@@ -676,9 +708,8 @@ impl<M: Model + Debug> Agent for CodeAgent<M> {
                     .unwrap();
 
                 let response = llm_output.get_response().unwrap();
-                println!("Response: {}", response);
                 let code = parse_code_blobs(&response).unwrap();
-                println!("Code: {}", code);
+                info!("Code: {}", code);
                 step_log.tool_call = Some(ToolCall {
                     id: None,
                     call_type: Some("function".to_string()),
@@ -687,26 +718,40 @@ impl<M: Model + Debug> Agent for CodeAgent<M> {
                         arguments: serde_json::json!({ "code": code }),
                     },
                 });
-                let result = self
-                    .local_python_interpreter
-                    .forward(&code, &mut None);
+                let result = self.local_python_interpreter.forward(&code, &mut None);
                 match result {
                     Ok(result) => {
-                        println!("Result: {}", result);
-                        info!("Observation: {}", result);
-                        step_log.observations = Some(result);
-                    }
-                    Err(e) => {
-                        match e {
-                            InterpreterError::FinalAnswer(answer) => {
-                                return Ok(Some(answer));
-                            }
-                            _ => {
-                                step_log.error = Some(AgentError::Execution(e.to_string()));
-                                info!("Error: {}", e);
-                            }
+                        let (result, execution_logs) = result;
+
+                        let mut observation = if execution_logs.len()>0 {
+                            format!(
+                                "Observation: {}\nExecution logs: {}",
+                                result, execution_logs
+                            )
+                        } else {
+                            format!("Observation: {}", result)
+                        };
+                        if observation.len() > 20000 {
+                            observation = observation.chars().take(20000).collect::<String>();
+                            observation = format!("{} \n....This content has been truncated due to the 20000 character limit.....", observation);
                         }
+                        info!(
+                            "{}",
+                            observation
+                        );
+
+                        step_log.observations =
+                            Some(observation.chars().take(20000).collect::<String>());
                     }
+                    Err(e) => match e {
+                        InterpreterError::FinalAnswer(answer) => {
+                            return Ok(Some(answer));
+                        }
+                        _ => {
+                            step_log.error = Some(AgentError::Execution(e.to_string()));
+                            info!("Error: {}", e);
+                        }
+                    },
                 }
             }
             _ => {

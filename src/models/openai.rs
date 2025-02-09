@@ -139,7 +139,7 @@ impl Model for OpenAIServerModel {
         args: Option<HashMap<String, Vec<String>>>,
     ) -> Result<Box<dyn ModelResponse>, AgentError> {
         let max_tokens = max_tokens.unwrap_or(1500);
-        println!("Messages: {}", messages.iter().filter(|m| m.role != MessageRole::System).map(|m| m.content.clone()).collect::<Vec<_>>().join("\n"));
+        // println!("Messages: {}", messages.iter().map(|m| m.content.clone()).collect::<Vec<_>>().join("\n"));
         let messages = messages
             .iter()
             .map(|message| {

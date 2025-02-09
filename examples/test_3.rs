@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
-use smolagents::agents::{Agent, CodeAgent, FunctionCallingAgent};
+use smolagents::agents::{Agent, CodeAgent};
 use smolagents::errors::AgentError;
 use smolagents::models::model_traits::{Model, ModelResponse};
 use smolagents::models::ollama::{OllamaModel, OllamaModelBuilder};

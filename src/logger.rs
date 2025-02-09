@@ -51,7 +51,14 @@ impl log::Log for ColoredLogger {
                 writeln!(stdout, "{}", top_border.green()).unwrap();
                 writeln!(stdout, "{}{}{}", side_border.green(), prefix.green().bold(), content.white().bold()).unwrap();
                 writeln!(stdout, "{}", bottom_border.green()).unwrap();
-            } else {
+            }else if msg.starts_with("Code:") {
+                let (prefix, content) = msg.split_at(5);
+                writeln!(stdout, "{}", top_border.yellow()).unwrap();
+                writeln!(stdout, "{}{}{}", side_border.yellow(), prefix.yellow().bold(), content.green()).unwrap();
+                writeln!(stdout, "{}", bottom_border.yellow()).unwrap();
+            }
+            
+            else {
                 writeln!(stdout, "{}", top_border.blue()).unwrap();
                 writeln!(stdout, "{}{}", side_border.blue(), msg.blue()).unwrap();
                 writeln!(stdout, "{}", bottom_border.blue()).unwrap();
