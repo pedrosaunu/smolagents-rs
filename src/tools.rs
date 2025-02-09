@@ -484,7 +484,7 @@ impl PythonInterpreterTool {
                 name: "python_interpreter",
                 description:  "This is a tool that evaluates python code. It can be used to perform calculations."
             }}
-    }           
+    }
 }
 
 impl Tool for PythonInterpreterTool {

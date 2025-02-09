@@ -641,7 +641,7 @@ impl<M: Model> CodeAgent<M> {
         let base_agent = MultiStepAgent::new(
             model,
             tools,
-            Some(&system_prompt),
+            Some(system_prompt),
             managed_agents,
             description,
             max_steps,
@@ -723,7 +723,7 @@ impl<M: Model + Debug> Agent for CodeAgent<M> {
                     Ok(result) => {
                         let (result, execution_logs) = result;
 
-                        let mut observation = if execution_logs.len()>0 {
+                        let mut observation = if !execution_logs.is_empty() {
                             format!(
                                 "Observation: {}\nExecution logs: {}",
                                 result, execution_logs
@@ -735,10 +735,7 @@ impl<M: Model + Debug> Agent for CodeAgent<M> {
                             observation = observation.chars().take(20000).collect::<String>();
                             observation = format!("{} \n....This content has been truncated due to the 20000 character limit.....", observation);
                         }
-                        info!(
-                            "{}",
-                            observation
-                        );
+                        info!("{}", observation);
 
                         step_log.observations =
                             Some(observation.chars().take(20000).collect::<String>());

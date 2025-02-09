@@ -9,7 +9,8 @@ use smolagents::models::ollama::{OllamaModel, OllamaModelBuilder};
 use smolagents::models::openai::OpenAIServerModel;
 use smolagents::models::types::Message;
 use smolagents::tools::{
-    AnyTool, DuckDuckGoSearchTool, GoogleSearchTool, PythonInterpreterTool, ToolInfo, VisitWebsiteTool
+    AnyTool, DuckDuckGoSearchTool, GoogleSearchTool, PythonInterpreterTool, ToolInfo,
+    VisitWebsiteTool,
 };
 
 #[derive(Debug, Clone, ValueEnum)]

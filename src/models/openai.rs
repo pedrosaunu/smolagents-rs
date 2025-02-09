@@ -157,7 +157,7 @@ impl Model for OpenAIServerModel {
             "max_tokens": max_tokens,
         });
 
-        if tools_to_call_from.len() > 0 {
+        if !tools_to_call_from.is_empty() {
             body["tools"] = json!(tools_to_call_from);
             body["tool_choice"] = json!("required");
         }

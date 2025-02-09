@@ -3,14 +3,13 @@ use std::collections::HashMap;
 use serde::Deserialize;
 use serde_json::json;
 
+use crate::{errors::AgentError, tools::ToolInfo};
 use anyhow::Result;
-use crate::{
-    errors::AgentError,
-    tools::ToolInfo,
-};
 
 use super::{
-    model_traits::{Model, ModelResponse}, openai::ToolCall, types::{Message, MessageRole}
+    model_traits::{Model, ModelResponse},
+    openai::ToolCall,
+    types::{Message, MessageRole},
 };
 
 #[derive(Debug, Deserialize)]
@@ -116,7 +115,6 @@ impl Model for OllamaModel {
 
         let tools = json!(tools_to_call_from);
 
-
         let body = json!({
             "model": self.model_id,
             "messages": messages,
@@ -129,9 +127,14 @@ impl Model for OllamaModel {
             "max_tokens": max_tokens.unwrap_or(1500),
         });
 
-        let response = self.client.post(format!("{}/api/chat", self.url)).json(&body).send().map_err(|e| {
-            AgentError::Generation(format!("Failed to get response from Ollama: {}", e))
-        })?;
+        let response = self
+            .client
+            .post(format!("{}/api/chat", self.url))
+            .json(&body)
+            .send()
+            .map_err(|e| {
+                AgentError::Generation(format!("Failed to get response from Ollama: {}", e))
+            })?;
         let output = response.json::<OllamaResponse>().unwrap();
         println!("output: {:?}", output);
         Ok(Box::new(output))

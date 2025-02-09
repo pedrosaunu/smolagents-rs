@@ -1,6 +1,10 @@
 use std::collections::HashMap;
 
-use crate::{errors::AgentError, models::{openai::ToolCall, types::Message}, tools::ToolInfo};
+use crate::{
+    errors::AgentError,
+    models::{openai::ToolCall, types::Message},
+    tools::ToolInfo,
+};
 use anyhow::Result;
 pub trait ModelResponse {
     fn get_response(&self) -> Result<String>;
