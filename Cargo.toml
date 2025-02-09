@@ -20,6 +20,7 @@ pyo3 = { version = "0.19", features = ["auto-initialize"] }
 regex = "1.11.0"
 [dev-dependencies]
 clap = { version = "4.5.1", features = ["derive"] }
+textwrap = "0.16.0"
 
 
 [[bin]]

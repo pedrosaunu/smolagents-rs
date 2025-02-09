@@ -496,8 +496,11 @@ impl Tool for PythonInterpreterTool {
         self.tool.description
     }
     fn forward(&self, arguments: PythonInterpreterToolParams) -> Result<String> {
-
-        Ok(format!("Evaluation Result: {}", evaluate_python_code(&arguments.code, vec![], &mut HashMap::new())?))
+        let result = evaluate_python_code(&arguments.code, vec![], &mut HashMap::new());
+        match result {
+            Ok(result) => Ok(format!("Evaluation Result: {}", result)),
+            Err(e) => Err(anyhow::anyhow!("Error evaluating code: {}", e)),
+        }
     }
 }
 

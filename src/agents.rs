@@ -1,4 +1,5 @@
 use crate::errors::AgentError;
+use crate::local_python_interpreter::InterpreterError;
 use crate::local_python_interpreter::LocalPythonInterpreter;
 use crate::models::model_traits::Model;
 use crate::models::openai::FunctionCall;
@@ -688,11 +689,25 @@ impl<M: Model + Debug> Agent for CodeAgent<M> {
                 });
                 let result = self
                     .local_python_interpreter
-                    .forward(&code, &mut None)
-                    .unwrap();
-                println!("Result: {}", result);
-                info!("Observation: {}", result);
-                step_log.observations = Some(result);
+                    .forward(&code, &mut None);
+                match result {
+                    Ok(result) => {
+                        println!("Result: {}", result);
+                        info!("Observation: {}", result);
+                        step_log.observations = Some(result);
+                    }
+                    Err(e) => {
+                        match e {
+                            InterpreterError::FinalAnswer(answer) => {
+                                return Ok(Some(answer));
+                            }
+                            _ => {
+                                step_log.error = Some(AgentError::Execution(e.to_string()));
+                                info!("Error: {}", e);
+                            }
+                        }
+                    }
+                }
             }
             _ => {
                 todo!()
