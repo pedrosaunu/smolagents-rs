@@ -117,7 +117,7 @@ fn main() -> Result<()> {
     // Create agent based on type
     let mut agent = match args.agent_type {
         AgentType::FunctionCalling => {
-            CodeAgent::new(model, tools, None, None, Some("CLI Agent"), Some(2))?
+            CodeAgent::new(model, tools, None, None, Some("CLI Agent"), Some(4))?
         }
     };
 

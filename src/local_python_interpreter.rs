@@ -117,8 +117,9 @@ pub enum CustomConstant {
     Float(f64),
     Str(String),
     Bool(bool),
-    Tuple(Vec<Constant>),
+    Tuple(Vec<CustomConstant>),
     PyObj(PyObject),
+    Dict(Vec<String>, Vec<CustomConstant>),
 }
 
 impl CustomConstant {
@@ -149,7 +150,7 @@ impl CustomConstant {
             _ => None,
         }
     }
-    pub fn tuple(&self) -> Option<Vec<Constant>> {
+    pub fn tuple(&self) -> Option<Vec<CustomConstant>> {
         match self {
             CustomConstant::Tuple(t) => Some(t.clone()),
             _ => None,
@@ -164,10 +165,18 @@ impl From<CustomConstant> for Constant {
             CustomConstant::Float(f) => Constant::Float(f),
             CustomConstant::Str(s) => Constant::Str(s),
             CustomConstant::Bool(b) => Constant::Bool(b),
-            CustomConstant::Tuple(t) => Constant::Tuple(t),
-            CustomConstant::PyObj(_) => {
-                panic!("PyObj is not supported in Constant");
-            }
+            CustomConstant::PyObj(obj) => Constant::Str(obj.to_string()),
+            _ => panic!("Unsupported constant type"),
+            // CustomConstant::Dict(keys, values) => {
+            //     let tuple_items = keys
+            //         .iter()
+            //         .zip(values.iter())
+            //         .map(|(k, v)| {
+            //             Constant::Tuple(vec![Constant::Str(k.clone()), Constant::from(v.clone())])
+            //         })
+            //         .collect::<Vec<Constant>>();
+            //     Constant::Tuple(tuple_items)
+            // }
         }
     }
 }
@@ -179,7 +188,9 @@ impl From<Constant> for CustomConstant {
             Constant::Float(f) => CustomConstant::Float(f),
             Constant::Str(s) => CustomConstant::Str(s),
             Constant::Bool(b) => CustomConstant::Bool(b),
-            Constant::Tuple(t) => CustomConstant::Tuple(t),
+            Constant::Tuple(t) => {
+                CustomConstant::Tuple(t.iter().map(|c| c.clone().into()).collect())
+            }
             _ => panic!("Unsupported constant type"),
         }
     }
@@ -196,14 +207,21 @@ impl IntoPy<PyObject> for CustomConstant {
                 let py_list: Vec<f64> = t
                     .iter()
                     .map(|x| match x {
-                        Constant::Float(f) => *f,
-                        Constant::Int(i) => convert_bigint_to_f64(i),
+                        CustomConstant::Float(f) => *f,
+                        CustomConstant::Int(i) => convert_bigint_to_f64(i),
                         _ => 0.0,
                     })
                     .collect();
                 py_list.into_py(py)
             }
             CustomConstant::PyObj(obj) => obj,
+            CustomConstant::Dict(keys, values) => {
+                let dict = PyDict::new(py);
+                for (key, value) in keys.iter().zip(values.iter()) {
+                    dict.set_item(key, value.clone().into_py(py)).unwrap();
+                }
+                dict.into_py(py)
+            }
         }
     }
 }
@@ -327,18 +345,18 @@ fn evaluate_stmt(
             // Convert PyObj iterator into a vector of values
             let values = match iter {
                 CustomConstant::PyObj(obj) => {
-                    Python::with_gil(|py| -> Result<Vec<Constant>, InterpreterError> {
+                    Python::with_gil(|py| -> Result<Vec<CustomConstant>, InterpreterError> {
                         let iter = obj.as_ref(py).iter()?;
                         let mut values = Vec::new();
 
                         for item in iter {
                             let item = item?;
                             if let Ok(num) = item.extract::<i64>() {
-                                values.push(Constant::Int(BigInt::from(num)));
+                                values.push(CustomConstant::Int(BigInt::from(num)));
                             } else if let Ok(float) = item.extract::<f64>() {
-                                values.push(Constant::Float(float));
+                                values.push(CustomConstant::Float(float));
                             } else if let Ok(string) = item.extract::<String>() {
-                                values.push(Constant::Str(string));
+                                values.push(CustomConstant::Str(string));
                             } else {
                                 return Err(InterpreterError::RuntimeError(
                                     "Unsupported type in iterator".to_string(),
@@ -480,6 +498,29 @@ fn evaluate_expr(
     custom_tools: &HashMap<String, CustomTool>,
 ) -> Result<CustomConstant, InterpreterError> {
     match &expr {
+        ast::Expr::Dict(dict) => {
+            let keys = dict
+                .keys
+                .iter()
+                .map(|e| {
+                    evaluate_expr(
+                        &Box::new(e.clone().unwrap()),
+                        state,
+                        static_tools,
+                        custom_tools,
+                    )
+                    .unwrap()
+                    .str()
+                    .unwrap()
+                })
+                .collect::<Vec<String>>();
+            let values = dict
+                .values
+                .iter()
+                .map(|e| evaluate_expr(&Box::new(e.clone()), state, static_tools, custom_tools))
+                .collect::<Result<Vec<CustomConstant>, InterpreterError>>()?;
+            Ok(CustomConstant::Dict(keys, values))
+        }
         ast::Expr::Call(call) => {
             let args = call
                 .args
@@ -515,6 +556,18 @@ fn evaluate_expr(
                             CustomConstant::Bool(bool_val)
                         } else if let Ok(int_val) = result.extract::<i64>(py) {
                             CustomConstant::Int(BigInt::from(int_val))
+                        } else if let Ok(dict_value) = result.extract::<&PyDict>(py) {
+                            let keys = dict_value
+                                .keys()
+                                .iter()
+                                .map(|key| key.extract::<String>().unwrap())
+                                .collect::<Vec<String>>();
+                            let values = dict_value
+                                .values()
+                                .iter()
+                                .map(|value| extract_constant_from_pyobject(value, py).unwrap())
+                                .collect::<Vec<CustomConstant>>();
+                            CustomConstant::Dict(keys, values)
                         } else {
                             CustomConstant::PyObj(result.into_py(py))
                         }
@@ -595,18 +648,51 @@ fn evaluate_expr(
             }
         }
         ast::Expr::BinOp(binop) => {
-            let left_val = evaluate_expr(&binop.left.clone(), state, static_tools, custom_tools)?;
-            let left_val = match left_val {
+            let left_val_exp =
+                evaluate_expr(&binop.left.clone(), state, static_tools, custom_tools)?;
+            let right_val_exp: CustomConstant =
+                evaluate_expr(&binop.right.clone(), state, static_tools, custom_tools)?;
+
+            match binop.op {
+                Operator::Add => {
+                    match (left_val_exp.clone(), right_val_exp.clone()) {
+                        (CustomConstant::Str(s), CustomConstant::Str(s2)) => {
+                            return Ok(CustomConstant::Str(s + &s2));
+                        }
+                        (CustomConstant::Str(s), CustomConstant::Int(i)) => {
+                            return Ok(CustomConstant::Str(s + &i.to_string()));
+                        }
+                        (CustomConstant::Int(i), CustomConstant::Str(s)) => {
+                            println!("i.to_string(): {:?}", i.to_string());
+                            return Ok(CustomConstant::Str(i.to_string() + &s));
+                        }
+                        _ => {}
+                    }
+                }
+                Operator::Mult => {
+                    match (left_val_exp.clone(), right_val_exp.clone()) {
+                        (CustomConstant::Str(s), CustomConstant::Int(i)) => {
+                            return Ok(CustomConstant::Str(s.repeat(convert_bigint_to_i64(&i) as usize)));
+                        }
+                        (CustomConstant::Int(i), CustomConstant::Str(s)) => {
+                            return Ok(CustomConstant::Str(s.repeat(convert_bigint_to_i64(&i) as usize)));
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+            let left_val = match left_val_exp.clone() {
                 CustomConstant::Float(f) => f,
                 CustomConstant::Int(i) => convert_bigint_to_f64(&i),
                 _ => panic!("Expected float or int"),
             };
-            let right_val = evaluate_expr(&binop.right.clone(), state, static_tools, custom_tools)?;
-            let right_val = match right_val {
+            let right_val = match right_val_exp.clone() {
                 CustomConstant::Float(f) => f,
                 CustomConstant::Int(i) => convert_bigint_to_f64(&i),
                 _ => panic!("Expected float or int"),
             };
+
 
             match &binop.op {
                 Operator::Add => Ok(CustomConstant::Float(left_val + right_val)),
@@ -671,12 +757,9 @@ fn evaluate_expr(
             list.elts
                 .iter()
                 .map(|e| {
-                    Constant::from(
-                        evaluate_expr(&Box::new(e.clone()), state, static_tools, custom_tools)
-                            .unwrap(),
-                    )
+                    evaluate_expr(&Box::new(e.clone()), state, static_tools, custom_tools).unwrap()
                 })
-                .collect::<Vec<Constant>>(),
+                .collect::<Vec<CustomConstant>>(),
         )),
         ast::Expr::Name(name) => {
             if let Some(value) = state.get(name.id.as_str()) {
@@ -693,12 +776,9 @@ fn evaluate_expr(
                 .elts
                 .iter()
                 .map(|e| {
-                    Constant::from(
-                        evaluate_expr(&Box::new(e.clone()), state, static_tools, custom_tools)
-                            .unwrap(),
-                    )
+                    evaluate_expr(&Box::new(e.clone()), state, static_tools, custom_tools).unwrap()
                 })
-                .collect::<Vec<Constant>>(),
+                .collect::<Vec<CustomConstant>>(),
         )),
         ast::Expr::JoinedStr(joinedstr) => Ok(CustomConstant::Str(
             joinedstr
@@ -713,12 +793,11 @@ fn evaluate_expr(
                 .collect::<Vec<String>>()
                 .join(""),
         )),
-        ast::Expr::FormattedValue(formattedvalue) => Ok(CustomConstant::Str(
-            evaluate_expr(&formattedvalue.value, state, static_tools, custom_tools)
-                .unwrap()
-                .str()
-                .unwrap(),
-        )),
+        ast::Expr::FormattedValue(formattedvalue) => {
+            let result = evaluate_expr(&formattedvalue.value, state, static_tools, custom_tools)?;
+
+            Ok(CustomConstant::Str(result.str().unwrap()))
+        }
         ast::Expr::Subscript(subscript) => {
             let result = Python::with_gil(|py| {
                 // Get the value being subscripted (e.g., the list/string)
@@ -731,12 +810,32 @@ fn evaluate_expr(
                     static_tools,
                     custom_tools,
                 )?);
+
+                // Handle integer indices for lists/sequences
                 if let Constant::Int(i) = slice {
                     let index = convert_bigint_to_i64(&i);
                     let result = value_obj.as_ref(py).get_item(index);
                     match result {
                         Ok(result) => return extract_constant_from_pyobject(result, py),
                         Err(e) => return Err(InterpreterError::RuntimeError(e.to_string())),
+                    }
+                }
+
+                // Handle string keys for dictionaries
+                if let Constant::Str(s) = slice {
+                    // Try to extract as dictionary first
+
+                    if let Ok(dict) = value_obj.as_ref(py).downcast::<PyDict>() {
+                        let result = dict.get_item(s.clone());
+                        match result {
+                            Some(value) => return extract_constant_from_pyobject(value, py),
+                            None => {
+                                return Err(InterpreterError::RuntimeError(format!(
+                                    "KeyError: '{}'",
+                                    s
+                                )))
+                            }
+                        }
                     }
                 }
 
@@ -789,15 +888,15 @@ fn evaluate_expr(
         ast::Expr::Slice(slice) => {
             let start = match &slice.lower {
                 Some(lower) => evaluate_expr(lower, state, static_tools, custom_tools)?.into(),
-                None => Constant::Int(BigInt::from(0)),
+                None => CustomConstant::Int(BigInt::from(0)),
             };
             let end = match &slice.upper {
                 Some(upper) => evaluate_expr(upper, state, static_tools, custom_tools)?.into(),
-                None => Constant::Int(BigInt::from(0)),
+                None => CustomConstant::Int(BigInt::from(0)),
             };
             let step = match &slice.step {
                 Some(step) => evaluate_expr(step, state, static_tools, custom_tools)?.into(),
-                None => Constant::Int(BigInt::from(1)),
+                None => CustomConstant::Int(BigInt::from(1)),
             };
             Ok(CustomConstant::Tuple(vec![start, end, step]))
         }
@@ -821,8 +920,20 @@ fn extract_constant_from_pyobject(
         Ok(CustomConstant::Int(BigInt::from(int_val)))
     } else if let Ok(list_val) = obj.extract::<Vec<f64>>() {
         Ok(CustomConstant::Tuple(
-            list_val.into_iter().map(Constant::Float).collect(),
+            list_val.into_iter().map(CustomConstant::Float).collect(),
         ))
+    } else if let Ok(dict_value) = obj.extract::<&PyDict>() {
+        let keys = dict_value
+            .keys()
+            .iter()
+            .map(|key| key.extract::<String>().unwrap())
+            .collect::<Vec<String>>();
+        let values = dict_value
+            .values()
+            .iter()
+            .map(|value| extract_constant_from_pyobject(value, py).unwrap())
+            .collect::<Vec<CustomConstant>>();
+        Ok(CustomConstant::Dict(keys, values))
     } else {
         Ok(CustomConstant::PyObj(obj.into_py(py)))
     }
@@ -863,20 +974,19 @@ impl LocalPythonInterpreter {
         code: &str,
         state: &mut Option<HashMap<String, Box<dyn Any>>>,
     ) -> Result<(String, String), InterpreterError> {
+        let mut empty_state = HashMap::new();
         let ast = ast::Suite::parse(code, "<embedded>")
             .map_err(|e| InterpreterError::SyntaxError(e.to_string()))?;
+        let mut state = state.as_mut().unwrap_or(&mut empty_state);
         let result = evaluate_ast(
             &ast,
-            state.as_mut().unwrap_or(&mut HashMap::new()),
+            &mut state,
             &self.static_tools,
             &self.custom_tools,
         )?;
 
-        let mut empty_state = HashMap::new();
         let mut empty_string = Vec::new();
         let execution_logs = state
-            .as_mut()
-            .unwrap_or(&mut empty_state)
             .get_mut("print_logs")
             .and_then(|logs| logs.downcast_mut::<Vec<String>>())
             .unwrap_or(&mut empty_string)
@@ -890,7 +1000,7 @@ impl LocalPythonInterpreter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tools::{DuckDuckGoSearchTool, FinalAnswerTool};
+    use crate::{local_python_interpreter, tools::{DuckDuckGoSearchTool, FinalAnswerTool}};
     use std::collections::HashMap;
 
     #[test]
@@ -1082,13 +1192,70 @@ print(f"The letter 'r' appears {r_count} times in the word '{word}'.")"#;
         let mut state = HashMap::new();
         let tools: Vec<Box<dyn AnyTool>> = vec![Box::new(DuckDuckGoSearchTool::new())];
         let _ = evaluate_python_code(&code, tools, &mut state).unwrap();
-        // assert_eq!(
-        //     state
-        //         .get("print_logs")
-        //         .unwrap()
-        //         .downcast_ref::<Vec<String>>()
-        //         .unwrap(),
-        //     &vec!["0", "1", "2", "3", "4"]
+    }
+
+    #[test]
+    fn test_evaluate_python_code_with_dict() {
+        // let code = textwrap::dedent(
+        //     r#"
+        // my_dict = {'a': "1", 'b': "2", 'c': "3"}
+        // print(f"my_dict['a'] is {my_dict['a']}")
+        // "#,
         // );
+        // let mut state = HashMap::new();
+        // let result = evaluate_python_code(&code, vec![], &mut state).unwrap();
+        // assert_eq!(result, "my_dict['a'] is 1");
+
+        let code = textwrap::dedent(
+            r#"
+dinner_places = [
+    {
+        "title": "25 Best Restaurants in Berlin, By Local Foodies",
+        "url": "https://www.timeout.com/berlin/restaurants/best-restaurants-in-berlin"
+    },
+    {
+        "title": "The 38 Best Berlin Restaurants - Eater",
+        "url": "https://www.eater.com/maps/best-restaurants-berlin"
+    },
+    {
+        "title": "THE 10 BEST Restaurants in Berlin - Tripadvisor",
+        "url": "https://www.tripadvisor.com/Restaurants-g187323-Berlin.html"
+    },
+    {
+        "title": "12 Unique Restaurants in Berlin",
+        "url": "https://www.myglobalviewpoint.com/unique-restaurants-in-berlin/"
+    },
+    {
+        "title": "Berlin's best restaurants: 101 places to eat right now",
+        "url": "https://www.the-berliner.com/food/best-restaurants-berlin-101-places-to-eat/"
+    }
+]
+
+for place in dinner_places:
+    print(f"{place['title']}: {place['url']}")
+        "#,
+        );
+        let state = HashMap::new();
+        let local_python_interpreter = LocalPythonInterpreter::new(vec![]);
+        let (result, execution_logs) = local_python_interpreter.forward(&code, &mut Some(state)).unwrap();
+        println!("execution_logs: {}", execution_logs);
+        // assert_eq!(result, "25 Best Restaurants in Berlin: https://www.timeout.com/berlin/restaurants/best-restaurants-in-berlin\nTHE 10 BEST Restaurants in Berlin - Tripadvisor: https://www.tripadvisor.com/Restaurants-g187323-Berlin.html\nThe 38 Best Berlin Restaurants - Eater: https://www.eater.com/maps/best-restaurants-berlin\n19 Best Restaurants in Berlin - Condé Nast Traveler: https://www.cntraveler.com/gallery/best-restaurants-in-berlin\nBerlin's best restaurants: 101 places to eat right now: https://www.the-berliner.com/food/best-restaurants-berlin-101-places-to-eat/\n");
+
+//         let code = textwrap::dedent(
+//             r#"
+// urls = [
+//     "https://www.tripadvisor.com/Restaurants-g187323-Berlin.html",
+//     "https://www.timeout.com/berlin/restaurants/best-restaurants-in-berlin"
+// ]
+
+// for url in urls:
+//     page_content = duckduckgo_search(url)
+//     print(page_content)
+//     print("\n" + "="*80 + "\n")  # Print separator between pages        
+//     "#,
+//         );
+//         let mut state = HashMap::new();
+//         let tools: Vec<Box<dyn AnyTool>> = vec![Box::new(DuckDuckGoSearchTool::new())];
+//         let _ = evaluate_python_code(&code, tools, &mut state).unwrap();
     }
 }

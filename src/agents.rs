@@ -708,8 +708,9 @@ impl<M: Model + Debug> Agent for CodeAgent<M> {
                     .unwrap();
 
                 let response = llm_output.get_response().unwrap();
+                info!("Response: {}", response);
+
                 let code = parse_code_blobs(&response).unwrap();
-                info!("Code: {}", code);
                 step_log.tool_call = Some(ToolCall {
                     id: None,
                     call_type: Some("function".to_string()),
@@ -722,7 +723,6 @@ impl<M: Model + Debug> Agent for CodeAgent<M> {
                 match result {
                     Ok(result) => {
                         let (result, execution_logs) = result;
-
                         let mut observation = if !execution_logs.is_empty() {
                             format!(
                                 "Observation: {}\nExecution logs: {}",
