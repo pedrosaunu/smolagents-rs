@@ -14,7 +14,6 @@ use crate::tools::{AnyTool, FinalAnswerTool, ToolGroup, ToolInfo};
 use std::collections::HashMap;
 
 use crate::logger::LOGGER;
-use anyhow::anyhow;
 use anyhow::Result;
 use colored::Colorize;
 use log::info;
@@ -251,6 +250,20 @@ pub trait Agent {
                             }
                         };
                         memory.push(tool_response_message);
+                    }
+
+                    if step_log.observations.is_some() || step_log.error.is_some() {
+                        let mut message_content = "".to_string();
+                        if step_log.error.is_some() {
+                            message_content = "Error: ".to_owned() + step_log.error.as_ref().unwrap().message()+"\nNow let's retry: take care not to repeat previous errors! If you have retried several times, try a completely different approach.\n";
+                        } else if step_log.observations.is_some() {
+                            message_content = "Observations: ".to_owned()
+                                + step_log.observations.as_ref().unwrap().as_str();
+                        }
+                        memory.push(Message {
+                            role: MessageRole::Assistant,
+                            content: message_content,
+                        });
                     }
                 }
             }
@@ -710,7 +723,13 @@ impl<M: Model + Debug> Agent for CodeAgent<M> {
                 let response = llm_output.get_response().unwrap();
                 info!("Response: {}", response);
 
-                let code = parse_code_blobs(&response).unwrap();
+                let code = match parse_code_blobs(&response) {
+                    Ok(code) => code,
+                    Err(e) => {
+                        step_log.error = Some(e);
+                        return Ok(None);
+                    }
+                };
                 step_log.tool_call = Some(ToolCall {
                     id: None,
                     call_type: Some("function".to_string()),
@@ -760,9 +779,9 @@ impl<M: Model + Debug> Agent for CodeAgent<M> {
     }
 }
 
-pub fn parse_code_blobs(code_blob: &str) -> Result<String> {
+pub fn parse_code_blobs(code_blob: &str) -> Result<String, AgentError> {
     let pattern = r"```(?:py|python)?\n([\s\S]*?)\n```";
-    let re = Regex::new(pattern)?;
+    let re = Regex::new(pattern).map_err(|e| AgentError::Execution(e.to_string()))?;
 
     let matches: Vec<String> = re
         .captures_iter(code_blob)
@@ -772,22 +791,22 @@ pub fn parse_code_blobs(code_blob: &str) -> Result<String> {
     if matches.is_empty() {
         // Check if it's a direct code blob or final answer
         if code_blob.contains("final") && code_blob.contains("answer") {
-            return Err(anyhow!(
+            return Err(AgentError::Parsing(
                 "The code blob is invalid. It seems like you're trying to return the final answer. Use:\n\
                 Code:\n\
                 ```py\n\
                 final_answer(\"YOUR FINAL ANSWER HERE\")\n\
-                ```"
+                ```".to_string(),
             ));
         }
 
-        return Err(anyhow!(
+        return Err(AgentError::Parsing(
             "The code blob is invalid. Make sure to include code with the correct pattern, for instance:\n\
             Thoughts: Your thoughts\n\
             Code:\n\
             ```py\n\
             # Your python code here\n\
-            ```"
+            ```".to_string(),
         ));
     }
 

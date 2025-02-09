@@ -43,6 +43,17 @@ impl log::Log for ColoredLogger {
                 )
                 .unwrap();
                 writeln!(stdout, "{}", bottom_border.yellow()).unwrap();
+            } else if msg.starts_with("Error:") {
+                let (prefix, content) = msg.split_at(6);
+                writeln!(stdout, "{}", top_border.red()).unwrap();
+                writeln!(
+                    stdout,
+                    "{}{}{}",
+                    side_border.red(),
+                    prefix.red().bold(),
+                    content.white().bold()
+                )
+                .unwrap();
             } else if msg.starts_with("Executing tool call:") {
                 let (prefix, content) = msg.split_at(21);
                 writeln!(stdout, "{}", top_border.magenta()).unwrap();
