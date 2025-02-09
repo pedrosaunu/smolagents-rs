@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
-use smolagents::agents::{Agent, FunctionCallingAgent};
+use smolagents::agents::{Agent, CodeAgent, FunctionCallingAgent};
 use smolagents::errors::AgentError;
 use smolagents::models::model_traits::{Model, ModelResponse};
 use smolagents::models::ollama::{OllamaModel, OllamaModelBuilder};
@@ -116,7 +116,7 @@ fn main() -> Result<()> {
     // Create agent based on type
     let mut agent = match args.agent_type {
         AgentType::FunctionCalling => {
-            FunctionCallingAgent::new(model, tools, None, None, Some("CLI Agent"), None)?
+            CodeAgent::new(model, tools, None, None, Some("CLI Agent"), Some(2))?
         }
     };
 

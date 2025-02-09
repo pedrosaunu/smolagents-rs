@@ -15,8 +15,12 @@ scraper = "0.22.0"
 terminal_size = "0.4.1"
 schemars = "0.8.21"
 chrono = "0.4.39"
+rustpython-parser = "0.4.0"
+pyo3 = { version = "0.19", features = ["auto-initialize"] }
+regex = "1.11.0"
 [dev-dependencies]
 clap = { version = "4.5.1", features = ["derive"] }
+
 
 [[bin]]
 name = "smolagents-rs"

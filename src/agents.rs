@@ -1,8 +1,11 @@
 use crate::errors::AgentError;
+use crate::local_python_interpreter::LocalPythonInterpreter;
 use crate::models::model_traits::Model;
+use crate::models::openai::FunctionCall;
 use crate::models::openai::ToolCall;
 use crate::models::types::Message;
 use crate::models::types::MessageRole;
+use crate::prompts::CODE_SYSTEM_PROMPT;
 use crate::prompts::{
     user_prompt_plan, FUNCTION_CALLING_SYSTEM_PROMPT, SYSTEM_PROMPT_FACTS, SYSTEM_PROMPT_PLAN,
 };
@@ -10,9 +13,11 @@ use crate::tools::{AnyTool, FinalAnswerTool, ToolGroup, ToolInfo};
 use std::collections::HashMap;
 
 use crate::logger::LOGGER;
+use anyhow::anyhow;
 use anyhow::Result;
 use colored::Colorize;
 use log::info;
+use regex::Regex;
 use serde_json::json;
 
 const DEFAULT_TOOL_DESCRIPTION_TEMPLATE: &str = r#"
@@ -25,20 +30,19 @@ use std::fmt::Debug;
 pub fn get_tool_description_with_args(tool: &ToolInfo) -> String {
     let mut description = DEFAULT_TOOL_DESCRIPTION_TEMPLATE.to_string();
     description = description.replace("{{ tool.name }}", tool.function.name);
+    description = description.replace("{{ tool.description }}", tool.function.description);
     description = description.replace(
-        "{{ tool.description }}",
-        tool.function.description,
+        "{{tool.inputs}}",
+        json!(&tool.function.parameters.schema)["properties"]
+            .to_string()
+            .as_str(),
     );
-    description = description.replace("{{tool.inputs}}", json!(&tool.function.parameters.schema)["properties"].to_string().as_str());
 
     description
 }
 
 pub fn get_tool_descriptions(tools: &[ToolInfo]) -> Vec<String> {
-    tools
-        .iter()
-        .map(get_tool_description_with_args)
-        .collect()
+    tools.iter().map(get_tool_description_with_args).collect()
 }
 pub fn format_prompt_with_tools(tools: Vec<ToolInfo>, prompt_template: &str) -> String {
     let tool_descriptions = get_tool_descriptions(&tools);
@@ -85,7 +89,7 @@ pub fn format_prompt_with_managed_agent_description(
     }
 }
 
-pub trait Agent: Debug {
+pub trait Agent {
     fn name(&self) -> &'static str;
     fn get_max_steps(&self) -> usize;
     fn get_step_number(&self) -> usize;
@@ -173,7 +177,6 @@ pub struct AgentStep {
 
 // Define a trait for the parent functionality
 
-#[derive(Debug)]
 pub struct MultiStepAgent<M: Model> {
     pub model: M,
     pub tools: Vec<Box<dyn AnyTool>>,
@@ -222,7 +225,7 @@ impl<M: Model + Debug> Agent for MultiStepAgent<M> {
     }
 }
 
-impl<M: Model + Debug> MultiStepAgent<M> {
+impl<M: Model> MultiStepAgent<M> {
     pub fn new(
         model: M,
         mut tools: Vec<Box<dyn AnyTool>>,
@@ -352,7 +355,7 @@ impl<M: Model + Debug> MultiStepAgent<M> {
                         if step_log.error.is_some() {
                             message_content = "Error: ".to_owned() + step_log.error.as_ref().unwrap().message()+"\nNow let's retry: take care not to repeat previous errors! If you have retried several times, try a completely different approach.\n";
                         } else if step_log.observations.is_some() {
-                            message_content = "Observations:\n".to_owned()
+                            message_content = "Observations: ".to_owned()
                                 + step_log.observations.as_ref().unwrap().as_str();
                         }
                         let tool_response_message = {
@@ -460,7 +463,6 @@ impl<M: Model + Debug> MultiStepAgent<M> {
     }
 }
 
-#[derive(Debug)]
 pub struct FunctionCallingAgent<M: Model> {
     base_agent: MultiStepAgent<M>,
 }
@@ -588,4 +590,149 @@ impl<M: Model + Debug> Agent for FunctionCallingAgent<M> {
             }
         }
     }
+}
+
+pub struct CodeAgent<M: Model> {
+    base_agent: MultiStepAgent<M>,
+    local_python_interpreter: LocalPythonInterpreter,
+}
+
+impl<M: Model> CodeAgent<M> {
+    pub fn new(
+        model: M,
+        tools: Vec<Box<dyn AnyTool>>,
+        system_prompt: Option<&str>,
+        managed_agents: Option<HashMap<String, Box<dyn Agent>>>,
+        description: Option<&str>,
+        max_steps: Option<usize>,
+    ) -> Result<Self> {
+        let system_prompt = system_prompt.unwrap_or(CODE_SYSTEM_PROMPT);
+
+        let base_agent = MultiStepAgent::new(
+            model,
+            tools,
+            Some(&system_prompt),
+            managed_agents,
+            description,
+            max_steps,
+        )?;
+        let local_python_interpreter = LocalPythonInterpreter::new(
+            base_agent
+                .tools
+                .iter()
+                .map(|tool| tool.clone_box())
+                .collect(),
+        );
+
+        Ok(Self {
+            base_agent,
+            local_python_interpreter,
+        })
+    }
+}
+
+impl<M: Model + Debug> Agent for CodeAgent<M> {
+    fn name(&self) -> &'static str {
+        self.base_agent.name()
+    }
+    fn get_max_steps(&self) -> usize {
+        self.base_agent.get_max_steps()
+    }
+    fn get_step_number(&self) -> usize {
+        self.base_agent.get_step_number()
+    }
+    fn increment_step_number(&mut self) {
+        self.base_agent.increment_step_number()
+    }
+    fn get_logs_mut(&mut self) -> &mut Vec<Step> {
+        self.base_agent.get_logs_mut()
+    }
+    fn set_task(&mut self, task: &str) {
+        self.base_agent.set_task(task);
+    }
+    fn get_system_prompt(&self) -> &str {
+        self.base_agent.get_system_prompt()
+    }
+    fn step(&mut self, log_entry: &mut Step) -> Result<Option<String>> {
+        match log_entry {
+            Step::ActionStep(step_log) => {
+                let agent_memory = self.base_agent.write_inner_memory_from_logs(None);
+                self.base_agent.input_messages = Some(agent_memory.clone());
+                step_log.agent_memory = Some(agent_memory.clone());
+
+                let llm_output = self
+                    .base_agent
+                    .model
+                    .run(
+                        self.base_agent.input_messages.as_ref().unwrap().clone(),
+                        vec![],
+                        None,
+                        Some(HashMap::from([(
+                            "stop".to_string(),
+                            vec!["Observation:".to_string(), "<end_code>".to_string()],
+                        )])),
+                    )
+                    .unwrap();
+
+                let response = llm_output.get_response().unwrap();
+                println!("Response: {}", response);
+                let code = parse_code_blobs(&response).unwrap();
+                println!("Code: {}", code);
+                step_log.tool_call = Some(ToolCall {
+                    id: None,
+                    call_type: Some("function".to_string()),
+                    function: FunctionCall {
+                        name: "python_interpreter".to_string(),
+                        arguments: serde_json::json!({ "code": code }),
+                    },
+                });
+                let result = self
+                    .local_python_interpreter
+                    .forward(&code, &mut None)
+                    .unwrap();
+                println!("Result: {}", result);
+                info!("Observation: {}", result);
+                step_log.observations = Some(result);
+            }
+            _ => {
+                todo!()
+            }
+        }
+
+        Ok(None)
+    }
+}
+
+pub fn parse_code_blobs(code_blob: &str) -> Result<String> {
+    let pattern = r"```(?:py|python)?\n([\s\S]*?)\n```";
+    let re = Regex::new(pattern)?;
+
+    let matches: Vec<String> = re
+        .captures_iter(code_blob)
+        .map(|cap| cap[1].trim().to_string())
+        .collect();
+
+    if matches.is_empty() {
+        // Check if it's a direct code blob or final answer
+        if code_blob.contains("final") && code_blob.contains("answer") {
+            return Err(anyhow!(
+                "The code blob is invalid. It seems like you're trying to return the final answer. Use:\n\
+                Code:\n\
+                ```py\n\
+                final_answer(\"YOUR FINAL ANSWER HERE\")\n\
+                ```"
+            ));
+        }
+
+        return Err(anyhow!(
+            "The code blob is invalid. Make sure to include code with the correct pattern, for instance:\n\
+            Thoughts: Your thoughts\n\
+            Code:\n\
+            ```py\n\
+            # Your python code here\n\
+            ```"
+        ));
+    }
+
+    Ok(matches.join("\n\n"))
 }

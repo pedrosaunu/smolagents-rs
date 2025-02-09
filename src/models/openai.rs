@@ -139,6 +139,7 @@ impl Model for OpenAIServerModel {
         args: Option<HashMap<String, Vec<String>>>,
     ) -> Result<Box<dyn ModelResponse>, AgentError> {
         let max_tokens = max_tokens.unwrap_or(1500);
+        println!("Messages: {}", messages.iter().filter(|m| m.role != MessageRole::System).map(|m| m.content.clone()).collect::<Vec<_>>().join("\n"));
         let messages = messages
             .iter()
             .map(|message| {
@@ -149,16 +150,17 @@ impl Model for OpenAIServerModel {
             })
             .collect::<Vec<_>>();
 
-        // let tools = json!(tools_to_call_from);
-
         let mut body = json!({
             "model": self.model_id,
             "messages": messages,
             "temperature": self.temperature,
-            "tools": tools_to_call_from,
             "max_tokens": max_tokens,
-            "tool_choice": "required"
         });
+
+        if tools_to_call_from.len() > 0 {
+            body["tools"] = json!(tools_to_call_from);
+            body["tool_choice"] = json!("required");
+        }
 
         if let Some(args) = args {
             let body_map = body.as_object_mut().unwrap();
@@ -178,7 +180,10 @@ impl Model for OpenAIServerModel {
             })?;
 
         match response.status() {
-            reqwest::StatusCode::OK => Ok(Box::new(response.json::<OpenAIResponse>().unwrap())),
+            reqwest::StatusCode::OK => {
+                let response = response.json::<OpenAIResponse>().unwrap();
+                Ok(Box::new(response))
+            }
             _ => Err(AgentError::Generation(format!(
                 "Failed to get response from OpenAI: {}",
                 response.text().unwrap()

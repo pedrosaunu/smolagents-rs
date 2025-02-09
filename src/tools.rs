@@ -8,9 +8,12 @@ use scraper::Selector;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::HashMap;
 use std::fmt::Debug;
 
+use crate::local_python_interpreter::evaluate_python_code;
 use crate::models::openai::FunctionCall;
+
 pub trait Parameters: DeserializeOwned + JsonSchema {}
 pub trait Tool: Debug {
     type Params: Parameters;
@@ -56,6 +59,13 @@ impl ToolInfo {
             },
         }
     }
+
+    pub fn get_parameter_names(&self) -> Vec<String> {
+        if let Some(schema) = &self.function.parameters.schema.object {
+            return schema.properties.keys().cloned().collect();
+        }
+        Vec::new()
+    }
 }
 
 pub fn get_json_schema(tool: &ToolInfo) -> serde_json::Value {
@@ -90,7 +100,7 @@ pub struct BaseParams {
 
 impl<P: DeserializeOwned + JsonSchema> Parameters for P where P: JsonSchema {}
 
-#[derive(Debug, Serialize, Default)]
+#[derive(Debug, Serialize, Default, Clone)]
 pub struct BaseTool {
     pub name: &'static str,
     pub description: &'static str,
@@ -109,7 +119,7 @@ impl Tool for BaseTool {
         Ok("Not implemented".to_string())
     }
 }
-#[derive(Debug, Serialize, Default)]
+#[derive(Debug, Serialize, Default, Clone)]
 pub struct VisitWebsiteTool {
     pub tool: BaseTool,
 }
@@ -193,7 +203,7 @@ pub struct FinalAnswerToolParams {
     answer: String,
 }
 
-#[derive(Debug, Serialize, Default)]
+#[derive(Debug, Serialize, Default, Clone)]
 pub struct FinalAnswerTool {
     pub tool: BaseTool,
 }
@@ -232,7 +242,7 @@ pub struct GoogleSearchToolParams {
     filter_year: Option<String>,
 }
 
-#[derive(Debug, Serialize, Default)]
+#[derive(Debug, Serialize, Default, Clone)]
 pub struct GoogleSearchTool {
     pub tool: BaseTool,
     pub api_key: String,
@@ -253,7 +263,6 @@ impl GoogleSearchTool {
 
     fn forward(&self, query: &str, filter_year: Option<&str>) -> String {
         let params = {
-
             let mut params = json!({
                 "engine": "google",
                 "q": query,
@@ -366,7 +375,7 @@ pub struct SearchResult {
     pub url: String,
 }
 
-#[derive(Debug, Serialize, Default)]
+#[derive(Debug, Serialize, Default, Clone)]
 pub struct DuckDuckGoSearchTool {
     pub tool: BaseTool,
 }
@@ -452,14 +461,55 @@ impl Tool for DuckDuckGoSearchTool {
     }
 }
 
+#[derive(Deserialize, JsonSchema)]
+#[schemars(title = "PythonInterpreterToolParams")]
+pub struct PythonInterpreterToolParams {
+    #[schemars(
+        description = "The code snippet to evaluate. All variables used in this snippet must be defined in this same snippet, 
+        else you will get an error. 
+        This code can only import the following python libraries: 
+        collections, datetime, itertools, math, queue, random, re, stat, statistics, time, unicodedata"
+    )]
+    code: String,
+}
+#[derive(Debug, Serialize, Default, Clone)]
+pub struct PythonInterpreterTool {
+    pub tool: BaseTool,
+}
+
+impl PythonInterpreterTool {
+    pub fn new() -> Self {
+        PythonInterpreterTool {
+            tool: BaseTool {
+                name: "python_interpreter",
+                description:  "This is a tool that evaluates python code. It can be used to perform calculations."
+            }}
+    }           
+}
+
+impl Tool for PythonInterpreterTool {
+    type Params = PythonInterpreterToolParams;
+    fn name(&self) -> &'static str {
+        self.tool.name
+    }
+    fn description(&self) -> &'static str {
+        self.tool.description
+    }
+    fn forward(&self, arguments: PythonInterpreterToolParams) -> Result<String> {
+
+        Ok(format!("Evaluation Result: {}", evaluate_python_code(&arguments.code, vec![], &mut HashMap::new())?))
+    }
+}
+
 pub trait AnyTool: Debug {
     fn name(&self) -> &'static str;
     fn description(&self) -> &'static str;
     fn forward_json(&self, json_args: serde_json::Value) -> Result<String>;
     fn tool_info(&self) -> ToolInfo;
+    fn clone_box(&self) -> Box<dyn AnyTool>;
 }
 
-impl<T: Tool + 'static> AnyTool for T {
+impl<T: Tool + Clone + 'static> AnyTool for T {
     fn name(&self) -> &'static str {
         Tool::name(self)
     }
@@ -475,6 +525,10 @@ impl<T: Tool + 'static> AnyTool for T {
 
     fn tool_info(&self) -> ToolInfo {
         ToolInfo::new::<T::Params, T>(self)
+    }
+
+    fn clone_box(&self) -> Box<dyn AnyTool> {
+        Box::new(self.clone())
     }
 }
 

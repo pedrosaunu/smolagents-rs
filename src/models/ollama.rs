@@ -132,6 +132,8 @@ impl Model for OllamaModel {
         let response = self.client.post(format!("{}/api/chat", self.url)).json(&body).send().map_err(|e| {
             AgentError::Generation(format!("Failed to get response from Ollama: {}", e))
         })?;
-        Ok(Box::new(response.json::<OllamaResponse>().unwrap()))
+        let output = response.json::<OllamaResponse>().unwrap();
+        println!("output: {:?}", output);
+        Ok(Box::new(output))
     }
 }
