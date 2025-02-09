@@ -721,7 +721,6 @@ impl<M: Model + Debug> Agent for CodeAgent<M> {
                     .unwrap();
 
                 let response = llm_output.get_response().unwrap();
-                info!("Response: {}", response);
 
                 let code = match parse_code_blobs(&response) {
                     Ok(code) => code,
@@ -730,6 +729,8 @@ impl<M: Model + Debug> Agent for CodeAgent<M> {
                         return Ok(None);
                     }
                 };
+
+                info!("Code: {}", code);
                 step_log.tool_call = Some(ToolCall {
                     id: None,
                     call_type: Some("function".to_string()),

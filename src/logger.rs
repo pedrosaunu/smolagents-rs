@@ -98,7 +98,7 @@ impl log::Log for ColoredLogger {
                     "{}{}{}",
                     side_border.yellow(),
                     prefix.yellow().bold(),
-                    content.green()
+                    content.magenta()
                 )
                 .unwrap();
                 writeln!(stdout, "{}", bottom_border.yellow()).unwrap();

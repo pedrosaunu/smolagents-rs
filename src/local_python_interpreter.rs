@@ -136,15 +136,34 @@ impl CustomConstant {
             CustomConstant::Int(i) => Some(i.to_string()),
             CustomConstant::Tuple(t) => {
                 let mut result = String::new();
-                result.push('[');
-
+                result.push('(');
                 for (i, item) in t.iter().enumerate() {
                     if i > 0 {
                         result.push_str(", ");
                     }
                     result.push_str(&item.str().unwrap_or_default());
                 }
-                result.push(']');
+                result.push(')');
+                Some(result)
+            }
+            CustomConstant::Dict(keys, values) => {
+                let mut result = String::new();
+                result.push('{');
+                for (i, key) in keys.iter().enumerate() {
+                    if i > 0 {
+                        result.push_str(", ");
+                    }
+                    result.push_str(&format!("'{}': {}", key, values[i].str().unwrap_or_default()));
+                }
+                result.push('}');
+
+                for (i, item) in values.iter().enumerate() {
+                    if i > 0 {
+                        result.push_str(", ");
+                    }
+                    result.push_str(&item.str().unwrap_or_default());
+                }
+                result.push('}');
                 Some(result)
             }
             _ => None,
@@ -1289,19 +1308,30 @@ for url in urls:
     fn test_evaluate_python_code_with_error() {
         let code = textwrap::dedent(
             r#"
-urls = [
-    "https://www.imdb.com/showtimes/cinema/ES/ci1028808/ES/08520",
-    "https://www.cinenews.be/en/cinema/pathe-eindhoven/"
-]
+movie_options = {
+    "Pathé Eindhoven": "https://en.pathe.nl/bioscoopagenda/eindhoven",
+    "Vue Eindhoven": "https://www.vuecinemas.nl/vue-cinemas/eindhoven"
+}
 
-# Visit these URLs to gather information
-for url in urls:
-    content = visit_website(url=url)
-    print(f"Content from {url}:\n", content[:1000], "\n" + "="*80 + "\n")
+restaurant_options = {
+    "Restaurant De Luytervelde": "https://wanderlog.com/list/geoCategory/198830/where-to-eat-best-restaurants-in-eindhoven",
+    "Foodgasm 2.0": "https://www.wijnspijs.nl/restaurant/eindhoven/",
+    "Saygili": "https://www.thefork.com/restaurants/eindhoven-c147012"
+}
+
+dinner_and_movie_plan = {
+    "movie_cinema": movie_options,
+    "dinner_restaurants": restaurant_options
+}
+
+print(dinner_and_movie_plan)
     "#,
         );
-        let mut state = HashMap::new();
+        let state = HashMap::new();
         let tools: Vec<Box<dyn AnyTool>> = vec![Box::new(VisitWebsiteTool::new())];
-        let _ = evaluate_python_code(&code, tools, &mut state).unwrap();
+        let local_python_interpreter = LocalPythonInterpreter::new(tools);
+        let (_, _) = local_python_interpreter
+            .forward(&code, &mut Some(state))
+            .unwrap();
     }
 }
