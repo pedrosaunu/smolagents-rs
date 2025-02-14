@@ -33,8 +33,8 @@ This is a rust implementation of HF [smolagents](https://github.com/huggingface/
 ### Agents
 
 - [x] Tool-Calling Agent
+- [x] CodeAgent
 - [ ] Planning Agent
-- [ ] CodeAgent (planned for implementation)
 
 ### Tools
 

@@ -1,22 +1,22 @@
 use std::collections::HashMap;
 use std::io::{self, Write};
 use colored::*;
-
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
-use smolagents::agents::{Agent, FunctionCallingAgent, CodeAgent};
-use smolagents::errors::AgentError;
-use smolagents::models::model_traits::{Model, ModelResponse};
-use smolagents::models::ollama::{OllamaModel, OllamaModelBuilder};
-use smolagents::models::openai::OpenAIServerModel;
-use smolagents::models::types::Message;
-use smolagents::tools::{
+use smolagents_rs::agents::{Agent, FunctionCallingAgent, CodeAgent};
+use smolagents_rs::errors::AgentError;
+use smolagents_rs::models::model_traits::{Model, ModelResponse};
+use smolagents_rs::models::ollama::{OllamaModel, OllamaModelBuilder};
+use smolagents_rs::models::openai::OpenAIServerModel;
+use smolagents_rs::models::types::Message;
+use smolagents_rs::tools::{
     AnyTool, DuckDuckGoSearchTool, GoogleSearchTool, ToolInfo, VisitWebsiteTool,
 };
 
 #[derive(Debug, Clone, ValueEnum)]
 enum AgentType {
     FunctionCalling,
+    Code,
 }
 
 #[derive(Debug, Clone, ValueEnum)]
@@ -38,6 +38,19 @@ enum ModelWrapper {
     Ollama(OllamaModel),
 }
 
+enum AgentWrapper {
+    FunctionCalling(FunctionCallingAgent<ModelWrapper>),
+    Code(CodeAgent<ModelWrapper>),
+}
+
+impl AgentWrapper {
+    fn run(&mut self, task: &str, stream: bool, reset: bool) -> Result<String> {
+        match self {
+            AgentWrapper::FunctionCalling(agent) => agent.run(task, stream, reset),
+            AgentWrapper::Code(agent) => agent.run(task, stream, reset),
+        }
+    }
+}
 impl Model for ModelWrapper {
     fn run(
         &self,
@@ -112,9 +125,13 @@ fn main() -> Result<()> {
     // Create agent based on type
     let mut agent = match args.agent_type {
         AgentType::FunctionCalling => {
-            CodeAgent::new(model, tools, None, None, Some("CLI Agent"), None)?
+            AgentWrapper::FunctionCalling(FunctionCallingAgent::new(model, tools, None, None, Some("CLI Agent"), None)?)
+        }
+        AgentType::Code => {
+            AgentWrapper::Code(CodeAgent::new(model, tools, None, None, Some("CLI Agent"), None)?)
         }
     };
+
 
     loop {
         print!("{}", "User: ".yellow().bold());

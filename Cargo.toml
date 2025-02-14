@@ -1,5 +1,5 @@
 [package]
-name = "smolagents"
+name = "smolagents-rs"
 version = "0.1.0"
 edition = "2021"
 
@@ -15,9 +15,10 @@ scraper = "0.22.0"
 terminal_size = "0.4.1"
 schemars = "0.8.21"
 chrono = "0.4.39"
-rustpython-parser = "0.4.0"
-pyo3 = { version = "0.19", features = ["auto-initialize"] }
+rustpython-parser = { version = "0.4.0", optional = true }
+pyo3 = { version = "0.19", features = ["auto-initialize"], optional = true }
 regex = "1.11.0"
+
 [dev-dependencies]
 clap = { version = "4.5.1", features = ["derive"] }
 textwrap = "0.16.0"
@@ -26,12 +27,18 @@ textwrap = "0.16.0"
 [[bin]]
 name = "smolagents-rs"
 path = "src/bin/main.rs"
-required-features = ["cli-deps"]
+required-features = ["cli"]
 
 [features]
-cli-deps = ["dep:clap"]
+cli = ["dep:clap"]
+code-agent = ["dep:rustpython-parser", "dep:pyo3"]
+all = ["cli", "code-agent"]
 
 [dependencies.clap]
 version = "4.5.1"
 features = ["derive"]
 optional = true
+
+[[example]]
+name = "cli"
+required-features = ["cli", "code-agent"]

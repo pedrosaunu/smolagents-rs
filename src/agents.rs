@@ -1,12 +1,19 @@
+//! This module contains the agents that can be used to solve tasks.
+//!
+//! Currently, there are two agents:
+//! - The function calling agent. This agent is used for models that have tool calling capabilities.
+//! - The code agent. This agent takes tools and can write simple python code that is executed to solve the task. 
+//! To use this agent you need to enable the `code-agent` feature.
+//!
+//! You can also implement your own agents by implementing the `Agent` trait.
+//!
+//! Planning agent is not implemented yet and will be added in the future.
+//!
 use crate::errors::AgentError;
-use crate::local_python_interpreter::InterpreterError;
-use crate::local_python_interpreter::LocalPythonInterpreter;
 use crate::models::model_traits::Model;
-use crate::models::openai::FunctionCall;
 use crate::models::openai::ToolCall;
 use crate::models::types::Message;
 use crate::models::types::MessageRole;
-use crate::prompts::CODE_SYSTEM_PROMPT;
 use crate::prompts::{
     user_prompt_plan, FUNCTION_CALLING_SYSTEM_PROMPT, SYSTEM_PROMPT_FACTS, SYSTEM_PROMPT_PLAN,
 };
@@ -17,8 +24,13 @@ use crate::logger::LOGGER;
 use anyhow::Result;
 use colored::Colorize;
 use log::info;
-use regex::Regex;
+
 use serde_json::json;
+#[cfg(feature = "code-agent")]
+use {
+    crate::errors::InterpreterError, crate::local_python_interpreter::LocalPythonInterpreter,
+    crate::models::openai::FunctionCall, crate::prompts::CODE_SYSTEM_PROMPT, regex::Regex,
+};
 
 const DEFAULT_TOOL_DESCRIPTION_TEMPLATE: &str = r#"
 {{ tool.name }}: {{ tool.description }}
@@ -632,11 +644,13 @@ impl<M: Model + Debug> Agent for FunctionCallingAgent<M> {
     }
 }
 
+#[cfg(feature = "code-agent")]
 pub struct CodeAgent<M: Model> {
     base_agent: MultiStepAgent<M>,
     local_python_interpreter: LocalPythonInterpreter,
 }
 
+#[cfg(feature = "code-agent")]
 impl<M: Model> CodeAgent<M> {
     pub fn new(
         model: M,
@@ -671,6 +685,7 @@ impl<M: Model> CodeAgent<M> {
     }
 }
 
+#[cfg(feature = "code-agent")]
 impl<M: Model + Debug> Agent for CodeAgent<M> {
     fn name(&self) -> &'static str {
         self.base_agent.name()
@@ -703,18 +718,15 @@ impl<M: Model + Debug> Agent for CodeAgent<M> {
                 self.base_agent.input_messages = Some(agent_memory.clone());
                 step_log.agent_memory = Some(agent_memory);
 
-                let llm_output = self
-                    .base_agent
-                    .model
-                    .run(
-                        self.base_agent.input_messages.as_ref().unwrap().clone(),
-                        vec![],
-                        None,
-                        Some(HashMap::from([(
-                            "stop".to_string(),
-                            vec!["Observation:".to_string(), "<end_code>".to_string()],
-                        )])),
-                    )?;
+                let llm_output = self.base_agent.model.run(
+                    self.base_agent.input_messages.as_ref().unwrap().clone(),
+                    vec![],
+                    None,
+                    Some(HashMap::from([(
+                        "stop".to_string(),
+                        vec!["Observation:".to_string(), "<end_code>".to_string()],
+                    )])),
+                )?;
 
                 let response = llm_output.get_response()?;
 
@@ -776,6 +788,7 @@ impl<M: Model + Debug> Agent for CodeAgent<M> {
     }
 }
 
+#[cfg(feature = "code-agent")]
 pub fn parse_code_blobs(code_blob: &str) -> Result<String, AgentError> {
     let pattern = r"```(?:py|python)?\n([\s\S]*?)\n```";
     let re = Regex::new(pattern).map_err(|e| AgentError::Execution(e.to_string()))?;

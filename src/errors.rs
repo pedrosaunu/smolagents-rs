@@ -1,3 +1,5 @@
+use std::fmt;
+
 #[derive(Debug, Clone)]
 pub enum AgentError {
     Parsing(String),
@@ -33,3 +35,35 @@ pub type AgentParsingError = AgentError;
 pub type AgentExecutionError = AgentError;
 pub type AgentMaxStepsError = AgentError;
 pub type AgentGenerationError = AgentError;
+
+// Custom error type for interpreter
+#[derive(Debug, PartialEq)]
+pub enum InterpreterError {
+    SyntaxError(String),
+    RuntimeError(String),
+    FinalAnswer(String),
+    OperationLimitExceeded,
+    UnauthorizedImport(String),
+    UnsupportedOperation(String),
+}
+
+impl fmt::Display for InterpreterError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            InterpreterError::SyntaxError(msg) => write!(f, "Syntax Error: {}", msg),
+            InterpreterError::RuntimeError(msg) => write!(f, "Runtime Error: {}", msg),
+            InterpreterError::FinalAnswer(msg) => write!(f, "Final Answer: {}", msg),
+            InterpreterError::OperationLimitExceeded => write!(
+                f,
+                "Operation limit exceeded. Possible infinite loop detected."
+            ),
+            InterpreterError::UnauthorizedImport(module) => {
+                write!(f, "Unauthorized import of module: {}", module)
+            }
+            InterpreterError::UnsupportedOperation(op) => {
+                write!(f, "Unsupported operation: {}", op)
+            }
+        }
+    }
+}
+

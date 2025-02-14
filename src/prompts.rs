@@ -1,3 +1,6 @@
+//! This module contains the prompts for the agents.
+
+/// The system prompt for the code agent.
 pub const CODE_SYSTEM_PROMPT: &str = r#"You are an expert assistant who can solve any task using code blobs. You will be given a task to solve as best you can.
 To do so, you have been given access to a list of tools: these tools are basically Python functions which you can call with code.
 To solve the task, you must plan forward to proceed in a series of steps, in a cycle of 'Thought:', 'Code:', and 'Observation:' sequences.
@@ -162,6 +165,7 @@ Now Begin! If you solve the task correctly, you will receive a reward of $1,000,
 
 "#;
 
+/// The system prompt for the facts agent. This prompt is used to build a comprehensive preparatory survey of which facts we have at our disposal and which ones we still need.
 pub const SYSTEM_PROMPT_FACTS: &str = r#"Below I will present you a task.
 
 You will now build a comprehensive preparatory survey of which facts we have at our disposal and which ones we still need.
@@ -185,6 +189,7 @@ Keep in mind that "facts" will typically be specific names, dates, values, etc. 
 ### 3. Facts to derive
 Do not add anything else."#;
 
+/// The system prompt for the plan agent. This prompt is used to develop a step-by-step high-level plan to solve a task.
 pub const SYSTEM_PROMPT_PLAN: &str = r#"You are a world expert at making efficient plans to solve any task using a set of carefully crafted tools.
 
 Now for the given task, develop a step-by-step high-level plan taking into account the above inputs and list of facts.
@@ -192,6 +197,7 @@ This plan should involve individual tasks based on the available tools, that if 
 Do not skip steps, do not add any superfluous steps. Only write the high-level plan, DO NOT DETAIL INDIVIDUAL TOOL CALLS.
 After writing the final step of the plan, write the '\n<end_plan>' tag and stop there."#;
 
+/// The user prompt for the plan agent. This prompt is used to develop a step-by-step high-level plan to solve a task.
 pub fn user_prompt_plan(
     task: &str,
     tool_descriptions: &str,
@@ -221,6 +227,7 @@ Now begin! Write your plan below",
     )
 }
 
+/// The system prompt for the tool calling agent. This prompt is used for models that do not have tool calling capabilities.
 pub const TOOL_CALLING_SYSTEM_PROMPT: &str = r#"You are an expert assistant who can solve any task using  tool calls. You will be given a task to solve as best you can.
 To do so, you have been given access to the following tools: {{tool_names}}
 
@@ -328,6 +335,7 @@ If no tool call is needed, use final_answer tool to return your answer.
 Now Begin! If you solve the task correctly and call the final_answer tool to give your answer, you will receive a reward of $1,000,000.
 "#;
 
+/// The system prompt for the function calling agent. This prompt is used for models that have tool calling capabilities.
 pub const FUNCTION_CALLING_SYSTEM_PROMPT: &str = r#"You are an expert assistant who can solve any task. You will be given a task to solve as best you can.
 
 1. The current time is {{current_time}}.

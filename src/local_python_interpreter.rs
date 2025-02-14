@@ -1,3 +1,4 @@
+use crate::errors::InterpreterError;
 use crate::tools::AnyTool;
 use anyhow::Result;
 use pyo3::prelude::*;
@@ -11,7 +12,6 @@ use rustpython_parser::{
     Parse,
 };
 use serde_json::{self, json};
-use std::fmt;
 use std::{any::Any, collections::HashMap};
 
 pub fn get_base_python_tools() -> HashMap<&'static str, &'static str> {
@@ -74,36 +74,7 @@ pub fn get_base_python_tools() -> HashMap<&'static str, &'static str> {
     .collect()
 }
 
-// Custom error type for interpreter
-#[derive(Debug, PartialEq)]
-pub enum InterpreterError {
-    SyntaxError(String),
-    RuntimeError(String),
-    FinalAnswer(String),
-    OperationLimitExceeded,
-    UnauthorizedImport(String),
-    UnsupportedOperation(String),
-}
 
-impl fmt::Display for InterpreterError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            InterpreterError::SyntaxError(msg) => write!(f, "Syntax Error: {}", msg),
-            InterpreterError::RuntimeError(msg) => write!(f, "Runtime Error: {}", msg),
-            InterpreterError::FinalAnswer(msg) => write!(f, "Final Answer: {}", msg),
-            InterpreterError::OperationLimitExceeded => write!(
-                f,
-                "Operation limit exceeded. Possible infinite loop detected."
-            ),
-            InterpreterError::UnauthorizedImport(module) => {
-                write!(f, "Unauthorized import of module: {}", module)
-            }
-            InterpreterError::UnsupportedOperation(op) => {
-                write!(f, "Unsupported operation: {}", op)
-            }
-        }
-    }
-}
 
 impl From<PyErr> for InterpreterError {
     fn from(err: PyErr) -> Self {

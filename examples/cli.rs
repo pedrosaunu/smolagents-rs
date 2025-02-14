@@ -2,20 +2,20 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
-use smolagents::agents::{Agent, FunctionCallingAgent};
-use smolagents::errors::AgentError;
-use smolagents::models::model_traits::{Model, ModelResponse};
-use smolagents::models::ollama::{OllamaModel, OllamaModelBuilder};
-use smolagents::models::openai::OpenAIServerModel;
-use smolagents::models::types::Message;
-use smolagents::tools::{
-    AnyTool, DuckDuckGoSearchTool, GoogleSearchTool, PythonInterpreterTool, ToolInfo,
-    VisitWebsiteTool,
+use smolagents_rs::agents::{Agent, FunctionCallingAgent, CodeAgent};
+use smolagents_rs::errors::AgentError;
+use smolagents_rs::models::model_traits::{Model, ModelResponse};
+use smolagents_rs::models::ollama::{OllamaModel, OllamaModelBuilder};
+use smolagents_rs::models::openai::OpenAIServerModel;
+use smolagents_rs::models::types::Message;
+use smolagents_rs::tools::{
+    AnyTool, DuckDuckGoSearchTool, GoogleSearchTool, ToolInfo, VisitWebsiteTool,
 };
 
 #[derive(Debug, Clone, ValueEnum)]
 enum AgentType {
     FunctionCalling,
+    Code,
 }
 
 #[derive(Debug, Clone, ValueEnum)]
@@ -23,7 +23,6 @@ enum ToolType {
     DuckDuckGo,
     VisitWebsite,
     GoogleSearchTool,
-    PythonInterpreter,
 }
 
 #[derive(Debug, Clone, ValueEnum)]
@@ -38,6 +37,19 @@ enum ModelWrapper {
     Ollama(OllamaModel),
 }
 
+enum AgentWrapper {
+    FunctionCalling(FunctionCallingAgent<ModelWrapper>),
+    Code(CodeAgent<ModelWrapper>),
+}
+
+impl AgentWrapper {
+    fn run(&mut self, task: &str, stream: bool, reset: bool) -> Result<String> {
+        match self {
+            AgentWrapper::FunctionCalling(agent) => agent.run(task, stream, reset),
+            AgentWrapper::Code(agent) => agent.run(task, stream, reset),
+        }
+    }
+}
 impl Model for ModelWrapper {
     fn run(
         &self,
@@ -56,10 +68,6 @@ impl Model for ModelWrapper {
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// The task to execute
-    #[arg(short = 't', long)]
-    task: String,
-
     /// The type of agent to use
     #[arg(short = 'a', long, value_enum, default_value = "function-calling")]
     agent_type: AgentType,
@@ -83,6 +91,14 @@ struct Args {
     /// Whether to stream the output
     #[arg(short, long, default_value = "false")]
     stream: bool,
+
+    /// Whether to reset the agent
+    #[arg(short, long, default_value = "false")]
+    reset: bool,
+
+    /// The task to execute
+    #[arg(short, long)]
+    task: String,
 }
 
 fn create_tool(tool_type: &ToolType) -> Box<dyn AnyTool> {
@@ -90,13 +106,12 @@ fn create_tool(tool_type: &ToolType) -> Box<dyn AnyTool> {
         ToolType::DuckDuckGo => Box::new(DuckDuckGoSearchTool::new()),
         ToolType::VisitWebsite => Box::new(VisitWebsiteTool::new()),
         ToolType::GoogleSearchTool => Box::new(GoogleSearchTool::new(None)),
-        ToolType::PythonInterpreter => Box::new(PythonInterpreterTool::new()),
     }
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
-
+    
     let tools: Vec<Box<dyn AnyTool>> = args.tools.iter().map(create_tool).collect();
 
     // Create model based on type
@@ -109,7 +124,7 @@ fn main() -> Result<()> {
         ModelType::Ollama => ModelWrapper::Ollama(
             OllamaModelBuilder::new()
                 .model_id(&args.model_id)
-                .ctx_length(32000)
+                .ctx_length(8000)
                 .build(),
         ),
     };
@@ -117,11 +132,16 @@ fn main() -> Result<()> {
     // Create agent based on type
     let mut agent = match args.agent_type {
         AgentType::FunctionCalling => {
-            FunctionCallingAgent::new(model, tools, None, None, Some("CLI Agent"), None)?
+            AgentWrapper::FunctionCalling(FunctionCallingAgent::new(model, tools, None, None, Some("CLI Agent"), None)?)
+        }
+        AgentType::Code => {
+            AgentWrapper::Code(CodeAgent::new(model, tools, None, None, Some("CLI Agent"), None)?)
         }
     };
 
-    // Run the agent
-    let _result = agent.run(&args.task, args.stream, true)?;
+
+    // Run the agent with the task from stdin
+    let _result = agent.run(&args.task, args.stream, args.reset)?;
+    
     Ok(())
 }
