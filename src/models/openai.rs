@@ -81,27 +81,35 @@ impl FunctionCall {
 }
 
 impl ModelResponse for OpenAIResponse {
-    fn get_response(&self) -> Result<String> {
+    fn get_response(&self) -> Result<String, AgentError> {
         Ok(self
             .choices
             .first()
-            .unwrap()
+            .ok_or(AgentError::Generation(
+                "No message returned from OpenAI".to_string(),
+            ))?
             .message
             .content
             .clone()
             .unwrap_or_default())
     }
 
-    fn get_tools_used(&self) -> Result<Vec<ToolCall>> {
-        Ok(self
+    fn get_tools_used(&self) -> Result<Vec<ToolCall>, AgentError> {
+        if let Some(tool_calls) = &self
             .choices
             .first()
-            .unwrap()
+            .ok_or(AgentError::Generation(
+                "No message returned from OpenAI".to_string(),
+            ))?
             .message
             .tool_calls
-            .as_ref()
-            .unwrap_or(&vec![])
-            .clone())
+        {
+            Ok(tool_calls.clone())
+        } else {
+            Err(AgentError::Generation(
+                "No tool calls returned from OpenAI".to_string(),
+            ))
+        }
     }
 }
 

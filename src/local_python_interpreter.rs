@@ -129,11 +129,11 @@ impl CustomConstant {
             _ => None,
         }
     }
-    pub fn str(&self) -> Option<String> {
+    pub fn str(&self) -> String {
         match self {
-            CustomConstant::Str(s) => Some(s.clone()),
-            CustomConstant::Float(f) => Some(f.to_string()),
-            CustomConstant::Int(i) => Some(i.to_string()),
+            CustomConstant::Str(s) => s.clone(),
+            CustomConstant::Float(f) => f.to_string(),
+            CustomConstant::Int(i) => i.to_string(),
             CustomConstant::Tuple(t) => {
                 let mut result = String::new();
                 result.push('[');
@@ -141,10 +141,10 @@ impl CustomConstant {
                     if i > 0 {
                         result.push_str(", ");
                     }
-                    result.push_str(&item.str().unwrap_or_default());
+                    result.push_str(&item.str());
                 }
                 result.push(']');
-                Some(result)
+                result
             }
             CustomConstant::Dict(keys, values) => {
                 let mut result = String::new();
@@ -153,11 +153,7 @@ impl CustomConstant {
                     if i > 0 {
                         result.push_str(", ");
                     }
-                    result.push_str(&format!(
-                        "'{}': {}",
-                        key,
-                        values[i].str().unwrap_or_default()
-                    ));
+                    result.push_str(&format!("'{}': {}", key, values[i].str()));
                 }
                 result.push('}');
 
@@ -165,12 +161,13 @@ impl CustomConstant {
                     if i > 0 {
                         result.push_str(", ");
                     }
-                    result.push_str(&item.str().unwrap_or_default());
+                    result.push_str(&item.str());
                 }
                 result.push('}');
-                Some(result)
+                result
             }
-            _ => None,
+            CustomConstant::PyObj(obj) => obj.to_string(),
+            CustomConstant::Bool(b) => b.to_string(),
         }
     }
     pub fn tuple(&self) -> Option<Vec<CustomConstant>> {
@@ -244,7 +241,8 @@ impl IntoPy<PyObject> for CustomConstant {
             CustomConstant::Dict(keys, values) => {
                 let dict = PyDict::new(py);
                 for (key, value) in keys.iter().zip(values.iter()) {
-                    dict.set_item(key, value.clone().into_py(py)).unwrap_or_default();
+                    dict.set_item(key, value.clone().into_py(py))
+                        .unwrap_or_default();
                 }
                 dict.into_py(py)
             }
@@ -518,25 +516,26 @@ fn evaluate_expr(
                 .iter()
                 .map(|e| {
                     evaluate_expr(
-                        &Box::new(e.clone().unwrap()),
+                        &Box::new(e.clone().ok_or_else(|| {
+                            InterpreterError::RuntimeError(
+                                "Dictionary key cannot be None".to_string(),
+                            )
+                        })?),
                         state,
                         static_tools,
                         custom_tools,
                     )
-                    .unwrap()
-                    .str()
-                    .unwrap()
+                    .map(|c| c.str())
                 })
-                .collect::<Vec<String>>();
+                .collect::<Result<Vec<String>, _>>()?;
             let values = dict
                 .values
                 .iter()
                 .map(|e| evaluate_expr(&Box::new(e.clone()), state, static_tools, custom_tools))
-                .collect::<Result<Vec<CustomConstant>, InterpreterError>>()?;
+                .collect::<Result<Vec<CustomConstant>, _>>()?;
             Ok(CustomConstant::Dict(keys, values))
         }
         ast::Expr::ListComp(list_comp) => {
-            // let result = evaluate_expr(&list_comp.elt, state, static_tools, custom_tools)?;
             let iter = evaluate_expr(
                 &list_comp.generators[0].iter,
                 state,
@@ -628,7 +627,7 @@ fn evaluate_expr(
                         static_tools,
                         custom_tools,
                     )?;
-                    Ok((k.arg.as_ref().unwrap().to_string(), value.str().unwrap()))
+                    Ok((k.arg.as_ref().unwrap().to_string(), value.str()))
                 })
                 .collect::<Result<HashMap<String, String>, InterpreterError>>()?;
             if func == "final_answer" {
@@ -637,7 +636,7 @@ fn evaluate_expr(
                 } else {
                     return Err(InterpreterError::FinalAnswer(
                         args.iter()
-                            .map(|c| c.str().unwrap())
+                            .map(|c| c.str())
                             .collect::<Vec<String>>()
                             .join(" "),
                     ));
@@ -646,27 +645,25 @@ fn evaluate_expr(
             if func == "print" {
                 match state.get_mut("print_logs") {
                     Some(logs) => {
-                        logs.downcast_mut::<Vec<String>>().unwrap().push(
-                            args.iter()
-                                .map(|c| c.str().unwrap())
-                                .collect::<Vec<String>>()
-                                .join(" "),
-                        );
+                        logs.downcast_mut::<Vec<String>>().map(|logs| {
+                            logs.push(
+                                args.iter()
+                                    .map(|c| c.str())
+                                    .collect::<Vec<String>>()
+                                    .join(" "),
+                            );
+                        });
                     }
                     None => {
                         state.insert(
                             "print_logs".to_string(),
-                            Box::new(
-                                args.iter()
-                                    .map(|c| c.str().unwrap())
-                                    .collect::<Vec<String>>(),
-                            ),
+                            Box::new(args.iter().map(|c| c.str()).collect::<Vec<String>>()),
                         );
                     }
                 }
                 return Ok(CustomConstant::Str(
                     args.iter()
-                        .map(|c| c.str().unwrap())
+                        .map(|c| c.str())
                         .collect::<Vec<String>>()
                         .join(" "),
                 ));
@@ -795,14 +792,19 @@ fn evaluate_expr(
         ast::Expr::List(list) => Ok(CustomConstant::Tuple(
             list.elts
                 .iter()
-                .map(|e| {
-                    evaluate_expr(&Box::new(e.clone()), state, static_tools, custom_tools).unwrap()
-                })
-                .collect::<Vec<CustomConstant>>(),
+                .map(|e| evaluate_expr(&Box::new(e.clone()), state, static_tools, custom_tools))
+                .collect::<Result<Vec<CustomConstant>, _>>()?,
         )),
         ast::Expr::Name(name) => {
             if let Some(value) = state.get(name.id.as_str()) {
-                Ok(value.downcast_ref::<CustomConstant>().unwrap().clone())
+                if let Some(constant) = value.downcast_ref::<CustomConstant>() {
+                    Ok(constant.clone())
+                } else {
+                    Err(InterpreterError::RuntimeError(format!(
+                        "Error in downcasting constant {}",
+                        name.id
+                    )))
+                }
             } else {
                 Err(InterpreterError::RuntimeError(format!(
                     "Variable '{}' used before assignment",
@@ -814,10 +816,8 @@ fn evaluate_expr(
             tuple
                 .elts
                 .iter()
-                .map(|e| {
-                    evaluate_expr(&Box::new(e.clone()), state, static_tools, custom_tools).unwrap()
-                })
-                .collect::<Vec<CustomConstant>>(),
+                .map(|e| evaluate_expr(&Box::new(e.clone()), state, static_tools, custom_tools))
+                .collect::<Result<Vec<CustomConstant>, _>>()?,
         )),
         ast::Expr::JoinedStr(joinedstr) => Ok(CustomConstant::Str(
             joinedstr
@@ -825,17 +825,15 @@ fn evaluate_expr(
                 .iter()
                 .map(|e| {
                     evaluate_expr(&Box::new(e.clone()), state, static_tools, custom_tools)
-                        .unwrap()
-                        .str()
-                        .unwrap()
+                        .map(|result| result.str())
                 })
-                .collect::<Vec<String>>()
+                .collect::<Result<Vec<String>, _>>()?
                 .join(""),
         )),
         ast::Expr::FormattedValue(formattedvalue) => {
             let result = evaluate_expr(&formattedvalue.value, state, static_tools, custom_tools)?;
 
-            Ok(CustomConstant::Str(result.str().unwrap()))
+            Ok(CustomConstant::Str(result.str()))
         }
         ast::Expr::Subscript(subscript) => {
             let result = Python::with_gil(|py| {
@@ -881,39 +879,71 @@ fn evaluate_expr(
                 let result = match &*subscript.slice {
                     // For slice operations like num[1:3:2]
                     ast::Expr::Slice(slice) => {
-                        // let slice_values = evaluate_expr(&subscript.slice, state, static_tools, custom_tools)?;
                         let start = match &slice.lower {
                             Some(lower) => {
                                 evaluate_expr(lower, state, static_tools, custom_tools)?.into()
                             }
                             None => None,
                         };
-                        let start = start.map(|start| {
-                            convert_bigint_to_i64(&Constant::from(start).int().unwrap())
-                        });
+                        let start = start
+                            .map(|start| {
+                                let constant = Constant::from(start);
+                                constant
+                                    .int()
+                                    .map(|i| convert_bigint_to_i64(&i))
+                                    .ok_or_else(|| {
+                                        InterpreterError::RuntimeError(
+                                            "Invalid start value in slice".to_string(),
+                                        )
+                                    })
+                            })
+                            .transpose()?;
+
                         let stop = match &slice.upper {
                             Some(upper) => {
                                 evaluate_expr(upper, state, static_tools, custom_tools)?.into()
                             }
                             None => None,
                         };
-                        let stop = stop.map(|stop| {
-                            convert_bigint_to_i64(&Constant::from(stop).int().unwrap())
-                        });
+                        let stop = stop
+                            .map(|stop| {
+                                let constant = Constant::from(stop);
+                                constant
+                                    .int()
+                                    .map(|i| convert_bigint_to_i64(&i))
+                                    .ok_or_else(|| {
+                                        InterpreterError::RuntimeError(
+                                            "Invalid stop value in slice".to_string(),
+                                        )
+                                    })
+                            })
+                            .transpose()?;
+
                         let step = match &slice.step {
                             Some(step) => {
                                 evaluate_expr(step, state, static_tools, custom_tools)?.into()
                             }
                             None => None,
                         };
-                        let step = step.map(|step| {
-                            convert_bigint_to_i64(&Constant::from(step).int().unwrap())
-                        });
+                        let step = step
+                            .map(|step| {
+                                let constant = Constant::from(step);
+                                constant
+                                    .int()
+                                    .map(|i| convert_bigint_to_i64(&i))
+                                    .ok_or_else(|| {
+                                        InterpreterError::RuntimeError(
+                                            "Invalid step value in slice".to_string(),
+                                        )
+                                    })
+                            })
+                            .transpose()?;
+
                         let slice_obj = py
                             .eval("slice", None, None)?
                             .call1((start, stop, step))?
                             .into_py(py);
-                        value_obj.as_ref(py).get_item(slice_obj).unwrap()
+                        value_obj.as_ref(py).get_item(slice_obj)?
                     }
                     _ => return Err(InterpreterError::RuntimeError("Invalid slice".to_string())),
                 };
@@ -975,13 +1005,13 @@ fn extract_constant_from_pyobject(
         let keys = dict_value
             .keys()
             .iter()
-            .map(|key| key.extract::<String>().unwrap())
-            .collect::<Vec<String>>();
+            .map(|key| key.extract::<String>())
+            .collect::<Result<Vec<String>, _>>()?;
         let values = dict_value
             .values()
             .iter()
-            .map(|value| extract_constant_from_pyobject(value, py).unwrap())
-            .collect::<Vec<CustomConstant>>();
+            .map(|value| extract_constant_from_pyobject(value, py))
+            .collect::<Result<Vec<CustomConstant>, _>>()?;
         Ok(CustomConstant::Dict(keys, values))
     } else {
         Ok(CustomConstant::PyObj(obj.into_py(py)))
@@ -999,7 +1029,7 @@ pub fn evaluate_python_code(
         .map_err(|e| InterpreterError::SyntaxError(e.to_string()))?;
 
     let result = evaluate_ast(&ast, state, &static_tools, &custom_tools)?;
-    Ok(result.str().unwrap())
+    Ok(result.str())
 }
 
 pub struct LocalPythonInterpreter {
@@ -1034,10 +1064,7 @@ impl LocalPythonInterpreter {
             .and_then(|logs| logs.downcast_mut::<Vec<String>>())
             .unwrap_or(&mut empty_string)
             .join("\n");
-        match result.str() {
-            Some(s) => Ok((s, execution_logs.clone())),
-            None => Err(InterpreterError::RuntimeError("No result".to_string())),
-        }
+        Ok((result.str(), execution_logs))
     }
 }
 #[cfg(test)]

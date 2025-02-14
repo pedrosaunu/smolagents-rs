@@ -158,7 +158,7 @@ pub trait Agent {
             content: "An agent tried to answer a user query but it got stuck and failed to do so. You are tasked with providing an answer instead. Here is the agent's memory:".to_string(),
         }];
 
-        input_messages.extend(self.write_inner_memory_from_logs(Some(true))[1..].to_vec());
+        input_messages.extend(self.write_inner_memory_from_logs(Some(true))?[1..].to_vec());
         input_messages.push(Message {
             role: MessageRole::User,
             content: format!("Based on the above, please provide an answer to the following user request: \n```\n{}", task),
@@ -170,7 +170,7 @@ pub trait Agent {
         Ok(Some(response))
     }
 
-    fn write_inner_memory_from_logs(&mut self, summary_mode: Option<bool>) -> Vec<Message> {
+    fn write_inner_memory_from_logs(&mut self, summary_mode: Option<bool>) -> Result<Vec<Message>> {
         let mut memory = Vec::new();
         let summary_mode = summary_mode.unwrap_or(false);
         for log in self.get_logs_mut() {
@@ -205,14 +205,13 @@ pub trait Agent {
                     if step_log.llm_output.is_some() && !summary_mode {
                         memory.push(Message {
                             role: MessageRole::Assistant,
-                            content: step_log.llm_output.clone().unwrap(),
+                            content: step_log.llm_output.clone().unwrap_or_default(),
                         });
                     }
                     if step_log.tool_call.is_some() {
                         let tool_call_message = Message {
                             role: MessageRole::Assistant,
-                            content: serde_json::to_string(&step_log.tool_call.clone().unwrap())
-                                .unwrap(),
+                            content: serde_json::to_string(&step_log.tool_call.clone().unwrap())?,
                         };
                         memory.push(tool_call_message);
                     }
@@ -268,7 +267,7 @@ pub trait Agent {
                 }
             }
         }
-        memory
+        Ok(memory)
     }
 }
 
@@ -290,13 +289,6 @@ pub struct AgentStep {
     observations: Option<String>,
     _step: usize,
 }
-
-// #[derive(Debug, Clone)]
-// pub struct ToolCall {
-//     name: String,
-//     arguments: HashMap<String, String>,
-//     id: String,
-// }
 
 // Define a trait for the parent functionality
 
@@ -560,7 +552,7 @@ impl<M: Model + Debug> Agent for FunctionCallingAgent<M> {
     fn step(&mut self, log_entry: &mut Step) -> Result<Option<String>> {
         match log_entry {
             Step::ActionStep(step_log) => {
-                let agent_memory = self.base_agent.write_inner_memory_from_logs(None);
+                let agent_memory = self.base_agent.write_inner_memory_from_logs(None)?;
                 self.base_agent.input_messages = Some(agent_memory.clone());
                 step_log.agent_memory = Some(agent_memory.clone());
                 let tools = self
@@ -583,50 +575,55 @@ impl<M: Model + Debug> Agent for FunctionCallingAgent<M> {
                     )
                     .unwrap();
 
+                let mut observations = Vec::new();
+
                 if let Ok(response) = model_message.get_response() {
                     if !response.trim().is_empty() {
-                        return Ok(Some(response));
+                        observations.push(response);
                     }
                 }
 
-                let tool_names = model_message.get_tools_used().unwrap();
-                let tool_name = tool_names.first().unwrap().clone().function.name;
+                let tools = model_message.get_tools_used()?;
 
-                match tool_name.as_str() {
-                    "final_answer" => {
-                        info!("Executing tool call: {}", tool_name);
-                        let answer = self
-                            .base_agent
-                            .tools
-                            .call(&tool_names.first().unwrap().function);
-                        Ok(Some(answer.unwrap()))
-                    }
-                    _ => {
-                        step_log.tool_call = Some(tool_names.first().unwrap().clone());
+                for tool in tools {
+                    let function_name = tool.clone().function.name;
 
-                        info!(
-                            "Executing tool call: {} with arguments: {:?}",
-                            tool_name,
-                            tool_names.first().unwrap().function.arguments
-                        );
-                        let observation = self
-                            .base_agent
-                            .tools
-                            .call(&tool_names.first().unwrap().function);
-                        match observation {
-                            Ok(observation) => {
-                                step_log.observations =
-                                    Some(observation.chars().take(3000).collect::<String>());
-                                info!("Observation: {}", observation.trim());
-                            }
-                            Err(e) => {
-                                step_log.error = Some(AgentError::Execution(e.to_string()));
-                                info!("Error: {}", e);
-                            }
+                    match function_name.as_str() {
+                        "final_answer" => {
+                            info!("Executing tool call: {}", function_name);
+                            let answer = self.base_agent.tools.call(&tool.function)?;
+                            return Ok(Some(answer));
                         }
-                        Ok(None)
+                        _ => {
+                            step_log.tool_call = Some(tool.clone());
+
+                            info!(
+                                "Executing tool call: {} with arguments: {:?}",
+                                function_name, tool.function.arguments
+                            );
+                            let observation = self.base_agent.tools.call(&tool.function);
+                            match observation {
+                                Ok(observation) => {
+                                    observations.push(format!(
+                                        "Observation from {}: {}",
+                                        function_name,
+                                        observation.chars().take(3000).collect::<String>()
+                                    ));
+                                }
+                                Err(e) => {
+                                    step_log.error = Some(AgentError::Execution(e.to_string()));
+                                    info!("Error: {}", e);
+                                }
+                            }
+                            step_log.observations = Some(observations.join("\n"));
+                            info!(
+                                "Observations: {}",
+                                step_log.observations.clone().unwrap_or_default().trim()
+                            );
+                        }
                     }
                 }
+                Ok(None)
             }
             _ => {
                 todo!()
@@ -702,9 +699,9 @@ impl<M: Model + Debug> Agent for CodeAgent<M> {
     fn step(&mut self, log_entry: &mut Step) -> Result<Option<String>> {
         match log_entry {
             Step::ActionStep(step_log) => {
-                let agent_memory = self.base_agent.write_inner_memory_from_logs(None);
+                let agent_memory = self.base_agent.write_inner_memory_from_logs(None)?;
                 self.base_agent.input_messages = Some(agent_memory.clone());
-                step_log.agent_memory = Some(agent_memory.clone());
+                step_log.agent_memory = Some(agent_memory);
 
                 let llm_output = self
                     .base_agent
@@ -717,10 +714,9 @@ impl<M: Model + Debug> Agent for CodeAgent<M> {
                             "stop".to_string(),
                             vec!["Observation:".to_string(), "<end_code>".to_string()],
                         )])),
-                    )
-                    .unwrap();
+                    )?;
 
-                let response = llm_output.get_response().unwrap();
+                let response = llm_output.get_response()?;
 
                 let code = match parse_code_blobs(&response) {
                     Ok(code) => code,

@@ -25,11 +25,11 @@ pub struct AssistantMessage {
 }
 
 impl ModelResponse for OllamaResponse {
-    fn get_response(&self) -> Result<String> {
+    fn get_response(&self) -> Result<String, AgentError> {
         Ok(self.message.content.clone().unwrap_or_default())
     }
 
-    fn get_tools_used(&self) -> Result<Vec<ToolCall>> {
+    fn get_tools_used(&self) -> Result<Vec<ToolCall>, AgentError> {
         Ok(self.message.tool_calls.clone().unwrap_or_default())
     }
 }

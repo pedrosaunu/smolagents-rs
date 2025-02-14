@@ -7,8 +7,8 @@ use crate::{
 };
 use anyhow::Result;
 pub trait ModelResponse {
-    fn get_response(&self) -> Result<String>;
-    fn get_tools_used(&self) -> Result<Vec<ToolCall>>;
+    fn get_response(&self) -> Result<String, AgentError>;
+    fn get_tools_used(&self) -> Result<Vec<ToolCall>, AgentError>;
 }
 
 pub trait Model {
