@@ -2,6 +2,9 @@
 name = "smolagents-rs"
 version = "0.1.0"
 edition = "2021"
+description = "A rust port of the the HuggingFace smolagents library. Build LLM agents with tools and code execution."
+license = "Apache-2.0"
+authors = ["Akshay Ballal <arballal@gmail.com>"]
 
 [dependencies]
 htmd = "0.1.6"
