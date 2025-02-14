@@ -552,7 +552,7 @@ fn evaluate_expr(
                         _ => panic!("Expected string"),
                     };
                     let item = item?;
-                    let item = extract_constant_from_pyobject(&item, py)?;
+                    let item = extract_constant_from_pyobject(item, py)?;
                     state.insert(target, Box::new(item));
                     let eval_expr =
                         evaluate_expr(&list_comp.elt, state, static_tools, custom_tools)?;
@@ -589,7 +589,7 @@ fn evaluate_expr(
                                 .map(|a| match a {
                                     // Convert numeric types to strings when calling string methods
                                     CustomConstant::Float(f) => f.into_py(py),
-                                    CustomConstant::Int(i) => convert_bigint_to_i64(&i).into_py(py),
+                                    CustomConstant::Int(i) => convert_bigint_to_i64(i).into_py(py),
                                     _ => a.clone().into_py(py),
                                 })
                                 .collect::<Vec<PyObject>>();
@@ -605,14 +605,14 @@ fn evaluate_expr(
                                     ast::Expr::Name(name) => name.id.to_string(),
                                     _ => panic!("Expected name"),
                                 };
-                                let out = extract_constant_from_pyobject(&obj.as_ref(py), py)?;
+                                let out = extract_constant_from_pyobject(obj.as_ref(py), py)?;
                                 state.insert(target, Box::new(out.clone()));
                                 return Ok(out);
                             }
 
-                            extract_constant_from_pyobject(&result.as_ref(py), py)
+                            extract_constant_from_pyobject(result.as_ref(py), py)
                         });
-                    return Ok(output?);
+                    return output;
                 }
                 _ => panic!("Expected function name"),
             };
@@ -645,14 +645,18 @@ fn evaluate_expr(
             if func == "print" {
                 match state.get_mut("print_logs") {
                     Some(logs) => {
-                        logs.downcast_mut::<Vec<String>>().map(|logs| {
+                        if let Some(logs) = logs.downcast_mut::<Vec<String>>() {
                             logs.push(
                                 args.iter()
                                     .map(|c| c.str())
                                     .collect::<Vec<String>>()
                                     .join(" "),
                             );
-                        });
+                        } else {
+                            return Err(InterpreterError::RuntimeError(
+                                "print_logs is not a list".to_string(),
+                            ));
+                        }
                     }
                     None => {
                         state.insert(
