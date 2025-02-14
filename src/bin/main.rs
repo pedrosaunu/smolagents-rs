@@ -1,8 +1,10 @@
 use std::collections::HashMap;
+use std::io::{self, Write};
+use colored::*;
 
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
-use smolagents::agents::{Agent, FunctionCallingAgent};
+use smolagents::agents::{Agent, FunctionCallingAgent, CodeAgent};
 use smolagents::errors::AgentError;
 use smolagents::models::model_traits::{Model, ModelResponse};
 use smolagents::models::ollama::{OllamaModel, OllamaModelBuilder};
@@ -54,10 +56,6 @@ impl Model for ModelWrapper {
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// The task to execute
-    #[arg(short = 't', long)]
-    task: String,
-
     /// The type of agent to use
     #[arg(short = 'a', long, value_enum, default_value = "function-calling")]
     agent_type: AgentType,
@@ -93,7 +91,7 @@ fn create_tool(tool_type: &ToolType) -> Box<dyn AnyTool> {
 
 fn main() -> Result<()> {
     let args = Args::parse();
-
+    
     let tools: Vec<Box<dyn AnyTool>> = args.tools.iter().map(create_tool).collect();
 
     // Create model based on type
@@ -106,7 +104,7 @@ fn main() -> Result<()> {
         ModelType::Ollama => ModelWrapper::Ollama(
             OllamaModelBuilder::new()
                 .model_id(&args.model_id)
-                .ctx_length(16384)
+                .ctx_length(8000)
                 .build(),
         ),
     };
@@ -118,7 +116,25 @@ fn main() -> Result<()> {
         }
     };
 
-    // Run the agent
-    let _result = agent.run(&args.task, args.stream, true)?;
+    loop {
+        print!("{}", "User: ".yellow().bold());
+        io::stdout().flush()?;
+        
+        let mut task = String::new();
+        io::stdin().read_line(&mut task)?;
+        let task = task.trim();
+
+        // Exit if user enters empty line or Ctrl+D
+        if task.is_empty() {
+            println!("Enter a task to execute");
+            continue;
+        }
+        if task == "exit" {
+            break;
+        }
+
+        // Run the agent with the task from stdin
+        let _result = agent.run(task, args.stream, true)?;
+    }
     Ok(())
 }

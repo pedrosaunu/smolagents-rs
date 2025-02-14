@@ -159,6 +159,7 @@ Here are the rules you should always follow to solve your task:
 10. Don't give up! You're in charge of solving the task, not providing directions to solve it.
 
 Now Begin! If you solve the task correctly, you will receive a reward of $1,000,000.
+
 "#;
 
 pub const SYSTEM_PROMPT_FACTS: &str = r#"Below I will present you a task.

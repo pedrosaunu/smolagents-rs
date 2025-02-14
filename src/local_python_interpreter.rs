@@ -136,14 +136,14 @@ impl CustomConstant {
             CustomConstant::Int(i) => Some(i.to_string()),
             CustomConstant::Tuple(t) => {
                 let mut result = String::new();
-                result.push('(');
+                result.push('[');
                 for (i, item) in t.iter().enumerate() {
                     if i > 0 {
                         result.push_str(", ");
                     }
                     result.push_str(&item.str().unwrap_or_default());
                 }
-                result.push(')');
+                result.push(']');
                 Some(result)
             }
             CustomConstant::Dict(keys, values) => {
@@ -153,7 +153,11 @@ impl CustomConstant {
                     if i > 0 {
                         result.push_str(", ");
                     }
-                    result.push_str(&format!("'{}': {}", key, values[i].str().unwrap_or_default()));
+                    result.push_str(&format!(
+                        "'{}': {}",
+                        key,
+                        values[i].str().unwrap_or_default()
+                    ));
                 }
                 result.push('}');
 
@@ -213,6 +217,7 @@ impl From<Constant> for CustomConstant {
             Constant::Float(f) => CustomConstant::Float(f),
             Constant::Str(s) => CustomConstant::Str(s),
             Constant::Bool(b) => CustomConstant::Bool(b),
+            Constant::None => CustomConstant::Str("None".to_string()),
             Constant::Tuple(t) => {
                 CustomConstant::Tuple(t.iter().map(|c| c.clone().into()).collect())
             }
@@ -224,7 +229,7 @@ impl From<Constant> for CustomConstant {
 impl IntoPy<PyObject> for CustomConstant {
     fn into_py(self, py: Python<'_>) -> PyObject {
         match self {
-            CustomConstant::Int(i) => i.to_string().into_py(py),
+            CustomConstant::Int(i) => convert_bigint_to_i64(&i).into_py(py),
             CustomConstant::Float(f) => f.into_py(py),
             CustomConstant::Str(s) => s.into_py(py),
             CustomConstant::Bool(b) => b.into_py(py),
@@ -239,7 +244,7 @@ impl IntoPy<PyObject> for CustomConstant {
             CustomConstant::Dict(keys, values) => {
                 let dict = PyDict::new(py);
                 for (key, value) in keys.iter().zip(values.iter()) {
-                    dict.set_item(key, value.clone().into_py(py)).unwrap();
+                    dict.set_item(key, value.clone().into_py(py)).unwrap_or_default();
                 }
                 dict.into_py(py)
             }
@@ -448,10 +453,7 @@ fn evaluate_stmt(
                         for (i, target_name) in target_names.elts.iter().enumerate() {
                             match target_name {
                                 ast::Expr::Name(name) => {
-                                    state.insert(
-                                        name.id.to_string(),
-                                        Box::new(values[i].clone()),
-                                    );
+                                    state.insert(name.id.to_string(), Box::new(values[i].clone()));
                                 }
                                 _ => panic!("Expected string"),
                             }
@@ -533,6 +535,35 @@ fn evaluate_expr(
                 .collect::<Result<Vec<CustomConstant>, InterpreterError>>()?;
             Ok(CustomConstant::Dict(keys, values))
         }
+        ast::Expr::ListComp(list_comp) => {
+            // let result = evaluate_expr(&list_comp.elt, state, static_tools, custom_tools)?;
+            let iter = evaluate_expr(
+                &list_comp.generators[0].iter,
+                state,
+                static_tools,
+                custom_tools,
+            )?;
+            let result = Python::with_gil(|py| -> Result<Vec<CustomConstant>, InterpreterError> {
+                let iter = iter.into_py(py);
+                let iter = iter.as_ref(py).iter()?;
+                let mut result = Vec::new();
+                for item in iter {
+                    let target = match &list_comp.generators[0].target {
+                        ast::Expr::Name(name) => name.id.to_string(),
+                        _ => panic!("Expected string"),
+                    };
+                    let item = item?;
+                    let item = extract_constant_from_pyobject(&item, py)?;
+                    state.insert(target, Box::new(item));
+                    let eval_expr =
+                        evaluate_expr(&list_comp.elt, state, static_tools, custom_tools)?;
+                    result.push(eval_expr);
+                }
+                Ok(result)
+            });
+            let result = result?;
+            Ok(CustomConstant::Tuple(result))
+        }
         ast::Expr::Call(call) => {
             let args = call
                 .args
@@ -548,48 +579,41 @@ fn evaluate_expr(
                         static_tools,
                         custom_tools,
                     )?;
-                    let func_name = attr.attr.to_string();
-                    let output = Python::with_gil(|py| {
-                        let obj = obj.into_py(py);
-                        let func = obj.getattr(py, func_name.as_str()).unwrap();
-                        let py_args = args
-                            .iter()
-                            .map(|a| match a {
-                                // Convert numeric types to strings when calling string methods
-                                CustomConstant::Float(f) => f.to_string().into_py(py),
-                                CustomConstant::Int(i) => i.to_string().into_py(py),
-                                _ => a.clone().into_py(py),
-                            })
-                            .collect::<Vec<PyObject>>();
-                        let py_tuple = PyTuple::new(py, py_args);
-                        let result = func.call1(py, py_tuple).unwrap();
 
-                        // Handle different return types
-                        if let Ok(float_val) = result.extract::<f64>(py) {
-                            CustomConstant::Float(float_val)
-                        } else if let Ok(string_val) = result.extract::<String>(py) {
-                            CustomConstant::Str(string_val)
-                        } else if let Ok(bool_val) = result.extract::<bool>(py) {
-                            CustomConstant::Bool(bool_val)
-                        } else if let Ok(int_val) = result.extract::<i64>(py) {
-                            CustomConstant::Int(BigInt::from(int_val))
-                        } else if let Ok(dict_value) = result.extract::<&PyDict>(py) {
-                            let keys = dict_value
-                                .keys()
+                    let func_name = attr.attr.to_string();
+                    let output =
+                        Python::with_gil(|py| -> Result<CustomConstant, InterpreterError> {
+                            let obj = obj.into_py(py);
+                            let func = obj.getattr(py, func_name.as_str())?;
+                            let py_args = args
                                 .iter()
-                                .map(|key| key.extract::<String>().unwrap())
-                                .collect::<Vec<String>>();
-                            let values = dict_value
-                                .values()
-                                .iter()
-                                .map(|value| extract_constant_from_pyobject(value, py).unwrap())
-                                .collect::<Vec<CustomConstant>>();
-                            CustomConstant::Dict(keys, values)
-                        } else {
-                            CustomConstant::PyObj(result.into_py(py))
-                        }
-                    });
-                    return Ok(output);
+                                .map(|a| match a {
+                                    // Convert numeric types to strings when calling string methods
+                                    CustomConstant::Float(f) => f.into_py(py),
+                                    CustomConstant::Int(i) => convert_bigint_to_i64(&i).into_py(py),
+                                    _ => a.clone().into_py(py),
+                                })
+                                .collect::<Vec<PyObject>>();
+                            let py_tuple = PyTuple::new(py, py_args);
+                            let result = func.call1(py, py_tuple)?;
+
+                            // For methods that modify in place (like append), return the original object
+                            if func_name == "append"
+                                || func_name == "extend"
+                                || func_name == "insert"
+                            {
+                                let target = match &*attr.value {
+                                    ast::Expr::Name(name) => name.id.to_string(),
+                                    _ => panic!("Expected name"),
+                                };
+                                let out = extract_constant_from_pyobject(&obj.as_ref(py), py)?;
+                                state.insert(target, Box::new(out.clone()));
+                                return Ok(out);
+                            }
+
+                            extract_constant_from_pyobject(&result.as_ref(py), py)
+                        });
+                    return Ok(output?);
                 }
                 _ => panic!("Expected function name"),
             };
@@ -935,6 +959,13 @@ fn extract_constant_from_pyobject(
     } else if let Ok(list_val) = obj.extract::<Vec<String>>() {
         Ok(CustomConstant::Tuple(
             list_val.into_iter().map(CustomConstant::Str).collect(),
+        ))
+    } else if let Ok(list_val) = obj.extract::<Vec<i64>>() {
+        Ok(CustomConstant::Tuple(
+            list_val
+                .into_iter()
+                .map(|i| CustomConstant::Int(BigInt::from(i)))
+                .collect(),
         ))
     } else if let Ok(list_val) = obj.extract::<Vec<f64>>() {
         Ok(CustomConstant::Tuple(
@@ -1305,33 +1336,106 @@ for url in urls:
     }
 
     #[test]
+    fn test_evaluate_python_code_with_list_comprehension() {
+        let code = textwrap::dedent(
+            r#"
+        a = [1,2,3]
+        print([x for x in a])
+    "#,
+        );
+        let mut state = HashMap::new();
+        let _ = evaluate_python_code(&code, vec![], &mut state).unwrap();
+        assert_eq!(
+            state
+                .get("print_logs")
+                .unwrap()
+                .downcast_ref::<Vec<String>>()
+                .unwrap(),
+            &vec!["[1, 2, 3]"]
+        );
+    }
+
+    #[test]
+    fn test_evaluate_python_code_append_to_list() {
+        let code = textwrap::dedent(
+            r#"
+        a = [1,2,3]
+        a.append(4)
+        print(a)
+    "#,
+        );
+        let mut state = HashMap::new();
+        let _ = evaluate_python_code(&code, vec![], &mut state).unwrap();
+        assert_eq!(
+            state
+                .get("print_logs")
+                .unwrap()
+                .downcast_ref::<Vec<String>>()
+                .unwrap(),
+            &vec!["[1, 2, 3, 4]"]
+        );
+
+        let code = textwrap::dedent(
+            r#"
+urls = [
+    "https://www.imdb.com/showtimes/cinema/ES/ci1028808/ES/08520",
+    "https://en.pathe.nl/bioscoopagenda",
+    "https://www.filmvandaag.nl/bioscoop?filter=64"
+]
+movies = []
+for url in urls:
+    page_content = url
+    movies.append(page_content)
+
+print(movies)
+    "#,
+        );
+        let mut state = HashMap::new();
+        let tools: Vec<Box<dyn AnyTool>> = vec![Box::new(VisitWebsiteTool::new())];
+        let _ = evaluate_python_code(&code, tools, &mut state).unwrap();
+        assert_eq!(
+            state
+                .get("print_logs")
+                .unwrap()
+                .downcast_ref::<Vec<String>>()
+                .unwrap(),
+            &vec!["[https://www.imdb.com/showtimes/cinema/ES/ci1028808/ES/08520, https://en.pathe.nl/bioscoopagenda, https://www.filmvandaag.nl/bioscoop?filter=64]"]
+        );
+    }
+
+    #[test]
     fn test_evaluate_python_code_with_error() {
         let code = textwrap::dedent(
             r#"
-movie_options = {
-    "Pathé Eindhoven": "https://en.pathe.nl/bioscoopagenda/eindhoven",
-    "Vue Eindhoven": "https://www.vuecinemas.nl/vue-cinemas/eindhoven"
-}
+cycling_paths = [
+    {
+        "title": "5x Cycling routes in and around Eindhoven",
+        "snippet": "One of the well-known cycling routes in and around Eindhoven is Rondje Eindhoven, which means 'around Eindhoven'. This route starts in four different directions. The distances are between 20 and 75 kilometres and take you through the city center, a number of dynamic districts, and beautiful nature.",
+        "url": "https://www.thisiseindhoven.com/en/see-and-do/fun-things-to-do/cycling-routes-in-and-around-eindhoven"
+    },
+    {
+        "title": "Top 5 Bike Rides and Cycling Routes around Eindhoven - Komoot",
+        "snippet": "Explore the top cycling routes around Eindhoven to experience more of this area. We bring you the top bike rides around Eindhoven — all you've got to do is pick the one that's right for you.",
+        "url": "https://www.komoot.com/guide/893152/cycling-around-eindhoven"
+    },
+    {
+        "title": "Cycling routes in Eindhoven - Bikemap",
+        "snippet": "Find cycle routes in Eindhoven: Round trips | Relaxed routes | Gravel routes | Road bike routes | MTB routes | Trekking routes.",
+        "url": "https://www.bikemap.net/en/l/2756253/"
+    }
+]
 
-restaurant_options = {
-    "Restaurant De Luytervelde": "https://wanderlog.com/list/geoCategory/198830/where-to-eat-best-restaurants-in-eindhoven",
-    "Foodgasm 2.0": "https://www.wijnspijs.nl/restaurant/eindhoven/",
-    "Saygili": "https://www.thefork.com/restaurants/eindhoven-c147012"
-}
+print("\n".join([f"{path['title']}: {path['snippet']} (More info: {path['url']})" for path in cycling_paths]))
 
-dinner_and_movie_plan = {
-    "movie_cinema": movie_options,
-    "dinner_restaurants": restaurant_options
-}
 
-print(dinner_and_movie_plan)
     "#,
         );
         let state = HashMap::new();
         let tools: Vec<Box<dyn AnyTool>> = vec![Box::new(VisitWebsiteTool::new())];
         let local_python_interpreter = LocalPythonInterpreter::new(tools);
-        let (_, _) = local_python_interpreter
+        let (_, logs) = local_python_interpreter
             .forward(&code, &mut Some(state))
             .unwrap();
+        println!("logs: {:?}", logs);
     }
 }
