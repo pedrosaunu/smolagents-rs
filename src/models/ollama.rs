@@ -101,7 +101,7 @@ impl Model for OllamaModel {
         messages: Vec<Message>,
         tools_to_call_from: Vec<ToolInfo>,
         max_tokens: Option<usize>,
-        _args: Option<HashMap<String, Vec<String>>>,
+        args: Option<HashMap<String, Vec<String>>>,
     ) -> Result<Box<dyn ModelResponse>, AgentError> {
         let messages = messages
             .iter()
@@ -114,18 +114,24 @@ impl Model for OllamaModel {
             .collect::<Vec<_>>();
 
         let tools = json!(tools_to_call_from);
-
-        let body = json!({
+        
+        let mut body = json!({
             "model": self.model_id,
             "messages": messages,
             "temperature": self.temperature,
             "stream": false,
             "options": json!({
-                "num_ctx": self.ctx_length
+                "num_ctx": self.ctx_length,
             }),
             "tools": tools,
             "max_tokens": max_tokens.unwrap_or(1500),
         });
+
+        if let Some(args) = args {
+            for (key, value) in args {
+                body["options"][key] = json!(value);
+            }
+        }
 
         let response = self
             .client
@@ -136,7 +142,6 @@ impl Model for OllamaModel {
                 AgentError::Generation(format!("Failed to get response from Ollama: {}", e))
             })?;
         let output = response.json::<OllamaResponse>().unwrap();
-        println!("output: {:?}", output);
         Ok(Box::new(output))
     }
 }

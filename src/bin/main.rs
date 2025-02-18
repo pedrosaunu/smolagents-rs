@@ -92,6 +92,10 @@ struct Args {
     /// Whether to stream the output
     #[arg(short, long, default_value = "false")]
     stream: bool,
+
+    /// Base URL for the API
+    #[arg(short, long)]
+    base_url: Option<String>,
 }
 
 fn create_tool(tool_type: &ToolType) -> Box<dyn AnyTool> {
@@ -110,6 +114,7 @@ fn main() -> Result<()> {
     // Create model based on type
     let model = match args.model_type {
         ModelType::OpenAI => ModelWrapper::OpenAI(OpenAIServerModel::new(
+            args.base_url.as_deref(),
             Some(&args.model_id),
             None,
             args.api_key,

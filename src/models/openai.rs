@@ -115,6 +115,7 @@ impl ModelResponse for OpenAIResponse {
 
 #[derive(Debug)]
 pub struct OpenAIServerModel {
+    pub base_url: String,
     pub model_id: String,
     pub client: Client,
     pub temperature: f32,
@@ -122,14 +123,21 @@ pub struct OpenAIServerModel {
 }
 
 impl OpenAIServerModel {
-    pub fn new(model_id: Option<&str>, temperature: Option<f32>, api_key: Option<String>) -> Self {
+    pub fn new(
+        base_url: Option<&str>,
+        model_id: Option<&str>,
+        temperature: Option<f32>,
+        api_key: Option<String>,
+    ) -> Self {
         let api_key = api_key.unwrap_or_else(|| {
             std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set")
         });
         let model_id = model_id.unwrap_or("gpt-4o-mini").to_string();
+        let base_url = base_url.unwrap_or("https://api.openai.com/v1/chat/completions");
         let client = Client::new();
 
         OpenAIServerModel {
+            base_url: base_url.to_string(),
             model_id,
             client,
             temperature: temperature.unwrap_or(0.5),
@@ -178,7 +186,7 @@ impl Model for OpenAIServerModel {
 
         let response = self
             .client
-            .post("https://api.openai.com/v1/chat/completions")
+            .post(&self.base_url)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .json(&body)
             .send()

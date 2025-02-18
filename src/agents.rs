@@ -15,7 +15,7 @@ use crate::models::openai::ToolCall;
 use crate::models::types::Message;
 use crate::models::types::MessageRole;
 use crate::prompts::{
-    user_prompt_plan, FUNCTION_CALLING_SYSTEM_PROMPT, SYSTEM_PROMPT_FACTS, SYSTEM_PROMPT_PLAN,
+    user_prompt_plan, TOOL_CALLING_SYSTEM_PROMPT, SYSTEM_PROMPT_FACTS, SYSTEM_PROMPT_PLAN,
 };
 use crate::tools::{AnyTool, FinalAnswerTool, ToolGroup, ToolInfo};
 use std::collections::HashMap;
@@ -372,7 +372,7 @@ impl<M: Model> MultiStepAgent<M> {
 
         let system_prompt_template = match system_prompt {
             Some(prompt) => prompt.to_string(),
-            None => FUNCTION_CALLING_SYSTEM_PROMPT.to_string(),
+            None => TOOL_CALLING_SYSTEM_PROMPT.to_string(),
         };
         let description = match description {
             Some(desc) => desc.to_string(),
@@ -484,7 +484,7 @@ impl<M: Model> MultiStepAgent<M> {
                     vec![],
                     None,
                     Some(HashMap::from([(
-                        "stop_sequences".to_string(),
+                        "stop".to_string(),
                         vec!["Observation:".to_string()],
                     )])),
                 )
@@ -519,7 +519,7 @@ impl<M: Model + Debug> FunctionCallingAgent<M> {
         description: Option<&str>,
         max_steps: Option<usize>,
     ) -> Result<Self> {
-        let system_prompt = system_prompt.unwrap_or(FUNCTION_CALLING_SYSTEM_PROMPT);
+        let system_prompt = system_prompt.unwrap_or(TOOL_CALLING_SYSTEM_PROMPT);
         let base_agent = MultiStepAgent::new(
             model,
             tools,
@@ -629,7 +629,7 @@ impl<M: Model + Debug> Agent for FunctionCallingAgent<M> {
                             }
                             step_log.observations = Some(observations.join("\n"));
                             info!(
-                                "Observations: {}",
+                                "Observation: {}",
                                 step_log.observations.clone().unwrap_or_default().trim()
                             );
                         }
