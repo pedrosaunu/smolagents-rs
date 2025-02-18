@@ -28,7 +28,6 @@
 //! 
 //! To use the code agent simply enable the `code-agent` feature.
 //! 
-
 pub mod agents;
 pub mod errors;
 

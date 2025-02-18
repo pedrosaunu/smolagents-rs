@@ -46,3 +46,7 @@ optional = true
 [[example]]
 name = "cli"
 required-features = ["cli", "code-agent"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

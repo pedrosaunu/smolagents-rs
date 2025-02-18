@@ -1,3 +1,4 @@
+
 //! This module contains the agents that can be used to solve tasks.
 //!
 //! Currently, there are two agents:
@@ -31,6 +32,8 @@ use {
     crate::errors::InterpreterError, crate::local_python_interpreter::LocalPythonInterpreter,
     crate::models::openai::FunctionCall, crate::prompts::CODE_SYSTEM_PROMPT, regex::Regex,
 };
+
+
 
 const DEFAULT_TOOL_DESCRIPTION_TEMPLATE: &str = r#"
 {{ tool.name }}: {{ tool.description }}
