@@ -117,6 +117,7 @@ fn main() -> Result<()> {
     // Create model based on type
     let model = match args.model_type {
         ModelType::OpenAI => ModelWrapper::OpenAI(OpenAIServerModel::new(
+            Some("https://api.openai.com/v1/chat/completions"),
             Some(&args.model_id),
             None,
             args.api_key,
