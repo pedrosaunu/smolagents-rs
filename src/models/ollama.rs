@@ -114,7 +114,7 @@ impl Model for OllamaModel {
             .collect::<Vec<_>>();
 
         let tools = json!(tools_to_call_from);
-        
+
         let mut body = json!({
             "model": self.model_id,
             "messages": messages,
@@ -126,7 +126,6 @@ impl Model for OllamaModel {
             "tools": tools,
             "max_tokens": max_tokens.unwrap_or(1500),
         });
-
         if let Some(args) = args {
             for (key, value) in args {
                 body["options"][key] = json!(value);

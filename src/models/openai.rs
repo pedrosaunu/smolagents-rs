@@ -95,7 +95,7 @@ impl ModelResponse for OpenAIResponse {
     }
 
     fn get_tools_used(&self) -> Result<Vec<ToolCall>, AgentError> {
-        if let Some(tool_calls) = &self
+        Ok(self
             .choices
             .first()
             .ok_or(AgentError::Generation(
@@ -103,13 +103,8 @@ impl ModelResponse for OpenAIResponse {
             ))?
             .message
             .tool_calls
-        {
-            Ok(tool_calls.clone())
-        } else {
-            Err(AgentError::Generation(
-                "No tool calls returned from OpenAI".to_string(),
-            ))
-        }
+            .clone()
+            .unwrap_or_default())
     }
 }
 
@@ -155,6 +150,7 @@ impl Model for OpenAIServerModel {
         args: Option<HashMap<String, Vec<String>>>,
     ) -> Result<Box<dyn ModelResponse>, AgentError> {
         let max_tokens = max_tokens.unwrap_or(1500);
+
         let messages = messages
             .iter()
             .map(|message| {
@@ -164,7 +160,6 @@ impl Model for OpenAIServerModel {
                 })
             })
             .collect::<Vec<_>>();
-
         let mut body = json!({
             "model": self.model_id,
             "messages": messages,
