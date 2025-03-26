@@ -63,7 +63,7 @@ Warning: Since there is no implementation of a Sandbox environment, be careful w
 
 ```bash
 # Pull the image
-docker pull your-username/smolagents-rs:latest
+docker pull akshayballal95/smolagents-rs:latest
 
 # Run with your OpenAI API key
 docker run -e OPENAI_API_KEY=your-key-here smolagents-rs -t "What is the latest news about Rust programming?"
