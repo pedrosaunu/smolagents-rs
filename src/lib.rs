@@ -50,5 +50,6 @@ pub(crate) mod logger;
 pub mod models;
 pub mod prompts;
 pub mod tools;
+pub mod parallel;
 
 pub use agents::*;

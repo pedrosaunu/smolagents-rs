@@ -51,7 +51,7 @@ The code agent is still in development, so there might be python code that is no
 - [ ] Sandbox environment
 - [ ] Streaming output
 - [ ] Improve logging
-- [ ] Parallel execution
+- [x] Parallel execution
 
 ---
 
@@ -115,6 +115,9 @@ smolagents-rs -t "Compare Rust and Go performance" -l duckduckgo,google-search,v
 
 # Stream output for real-time updates
 smolagents-rs -t "Analyze the latest crypto trends" -s
+
+# Run multiple tasks in parallel
+cargo run --example parallel --features cli,code-agent
 ```
 
 ---
