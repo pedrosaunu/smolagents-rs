@@ -7,6 +7,7 @@ use smolagents_rs::errors::AgentError;
 use smolagents_rs::models::model_traits::{Model, ModelResponse};
 use smolagents_rs::models::ollama::{OllamaModel, OllamaModelBuilder};
 use smolagents_rs::models::openai::OpenAIServerModel;
+use smolagents_rs::models::huggingface::HuggingFaceModel;
 use smolagents_rs::models::types::Message;
 use smolagents_rs::tools::{
     AnyTool, DuckDuckGoSearchTool, GoogleSearchTool, RagTool, ToolInfo, VisitWebsiteTool,
@@ -34,12 +35,14 @@ enum ToolType {
 enum ModelType {
     OpenAI,
     Ollama,
+    HuggingFace,
 }
 
 #[derive(Debug, Clone)]
 enum ModelWrapper {
     OpenAI(OpenAIServerModel),
     Ollama(OllamaModel),
+    HuggingFace(HuggingFaceModel),
 }
 
 enum AgentWrapper {
@@ -75,6 +78,7 @@ impl Model for ModelWrapper {
         match self {
             ModelWrapper::OpenAI(m) => Ok(m.run(messages, tools, max_tokens, args)?),
             ModelWrapper::Ollama(m) => Ok(m.run(messages, tools, max_tokens, args)?),
+            ModelWrapper::HuggingFace(m) => Ok(m.run(messages, tools, max_tokens, args)?),
         }
     }
 }
@@ -94,7 +98,7 @@ struct Args {
     #[arg(short = 'm', long, value_enum, default_value = "open-ai")]
     model_type: ModelType,
 
-    /// OpenAI API key (only required for OpenAI model)
+    /// API key for the selected model (OpenAI or Hugging Face)
     #[arg(short = 'k', long)]
     api_key: Option<String>,
 
@@ -139,6 +143,12 @@ fn main() -> Result<()> {
                 .ctx_length(8000)
                 .build(),
         ),
+        ModelType::HuggingFace => ModelWrapper::HuggingFace(HuggingFaceModel::new(
+            args.base_url.as_deref(),
+            Some(&args.model_id),
+            None,
+            args.api_key,
+        )),
     };
 
     // Create agent based on type
