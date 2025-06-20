@@ -2,14 +2,14 @@ use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use colored::*;
 use smolagents_rs::agents::Step;
-use smolagents_rs::agents::{Agent, CodeAgent, FunctionCallingAgent};
+use smolagents_rs::agents::{Agent, CodeAgent, FunctionCallingAgent, PlanningAgent};
 use smolagents_rs::errors::AgentError;
 use smolagents_rs::models::model_traits::{Model, ModelResponse};
 use smolagents_rs::models::ollama::{OllamaModel, OllamaModelBuilder};
 use smolagents_rs::models::openai::OpenAIServerModel;
 use smolagents_rs::models::types::Message;
 use smolagents_rs::tools::{
-    AnyTool, DuckDuckGoSearchTool, GoogleSearchTool, ToolInfo, VisitWebsiteTool,
+    AnyTool, DuckDuckGoSearchTool, GoogleSearchTool, RagTool, ToolInfo, VisitWebsiteTool,
 };
 use std::collections::HashMap;
 use std::fs::File;
@@ -19,6 +19,7 @@ use std::io::{self, Write};
 enum AgentType {
     FunctionCalling,
     Code,
+    Planning,
 }
 
 #[derive(Debug, Clone, ValueEnum)]
@@ -26,6 +27,7 @@ enum ToolType {
     DuckDuckGo,
     VisitWebsite,
     GoogleSearchTool,
+    Rag,
 }
 
 #[derive(Debug, Clone, ValueEnum)]
@@ -34,7 +36,7 @@ enum ModelType {
     Ollama,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum ModelWrapper {
     OpenAI(OpenAIServerModel),
     Ollama(OllamaModel),
@@ -43,6 +45,7 @@ enum ModelWrapper {
 enum AgentWrapper {
     FunctionCalling(FunctionCallingAgent<ModelWrapper>),
     Code(CodeAgent<ModelWrapper>),
+    Planning(PlanningAgent<ModelWrapper>),
 }
 
 impl AgentWrapper {
@@ -50,12 +53,14 @@ impl AgentWrapper {
         match self {
             AgentWrapper::FunctionCalling(agent) => agent.run(task, stream, reset),
             AgentWrapper::Code(agent) => agent.run(task, stream, reset),
+            AgentWrapper::Planning(agent) => agent.run(task, stream, reset),
         }
     }
     fn get_logs_mut(&mut self) -> &mut Vec<Step> {
         match self {
             AgentWrapper::FunctionCalling(agent) => agent.get_logs_mut(),
             AgentWrapper::Code(agent) => agent.get_logs_mut(),
+            AgentWrapper::Planning(agent) => agent.get_logs_mut(),
         }
     }
 }
@@ -111,6 +116,7 @@ fn create_tool(tool_type: &ToolType) -> Box<dyn AnyTool> {
         ToolType::DuckDuckGo => Box::new(DuckDuckGoSearchTool::new()),
         ToolType::VisitWebsite => Box::new(VisitWebsiteTool::new()),
         ToolType::GoogleSearchTool => Box::new(GoogleSearchTool::new(None)),
+        ToolType::Rag => Box::new(RagTool::new(vec![], 3)),
     }
 }
 
@@ -146,6 +152,14 @@ fn main() -> Result<()> {
             None,
         )?),
         AgentType::Code => AgentWrapper::Code(CodeAgent::new(
+            model,
+            tools,
+            None,
+            None,
+            Some("CLI Agent"),
+            None,
+        )?),
+        AgentType::Planning => AgentWrapper::Planning(PlanningAgent::new(
             model,
             tools,
             None,

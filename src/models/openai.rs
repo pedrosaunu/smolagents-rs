@@ -108,7 +108,7 @@ impl ModelResponse for OpenAIResponse {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct OpenAIServerModel {
     pub base_url: String,
     pub model_id: String,
@@ -199,5 +199,88 @@ impl Model for OpenAIServerModel {
                 response.text().unwrap()
             ))),
         }
+    }
+
+    fn run_stream(
+        &self,
+        messages: Vec<Message>,
+        tools_to_call_from: Vec<ToolInfo>,
+        max_tokens: Option<usize>,
+        args: Option<HashMap<String, Vec<String>>>,
+        callback: &mut dyn FnMut(&str),
+    ) -> Result<Box<dyn ModelResponse>, AgentError> {
+        let max_tokens = max_tokens.unwrap_or(1500);
+
+        let messages = messages
+            .iter()
+            .map(|message| {
+                json!({
+                    "role": message.role,
+                    "content": message.content
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut body = json!({
+            "model": self.model_id,
+            "messages": messages,
+            "temperature": self.temperature,
+            "max_tokens": max_tokens,
+            "stream": true
+        });
+
+        if !tools_to_call_from.is_empty() {
+            body["tools"] = json!(tools_to_call_from);
+            body["tool_choice"] = json!("required");
+        }
+
+        if let Some(args) = args {
+            let body_map = body.as_object_mut().unwrap();
+            for (key, value) in args {
+                body_map.insert(key, json!(value));
+            }
+        }
+
+        let response = self
+            .client
+            .post(&self.base_url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .json(&body)
+            .send()
+            .map_err(|e| {
+                AgentError::Generation(format!("Failed to get response from OpenAI: {}", e))
+            })?;
+
+        use std::io::{BufRead, BufReader};
+
+        let mut reader = BufReader::new(response);
+        let mut content = String::new();
+        let mut line = String::new();
+        while reader.read_line(&mut line).map_err(|e| AgentError::Generation(e.to_string()))? > 0 {
+            if line.starts_with("data: ") {
+                let data = line.trim_start_matches("data: ").trim();
+                if data == "[DONE]" {
+                    break;
+                }
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
+                    if let Some(token) = val["choices"][0]["delta"]["content"].as_str() {
+                        callback(token);
+                        content.push_str(token);
+                    }
+                }
+            }
+            line.clear();
+        }
+
+        let response = OpenAIResponse {
+            choices: vec![Choice {
+                message: AssistantMessage {
+                    role: MessageRole::Assistant,
+                    content: Some(content),
+                    tool_calls: None,
+                    refusal: None,
+                },
+            }],
+        };
+        Ok(Box::new(response))
     }
 }
