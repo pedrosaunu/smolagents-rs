@@ -49,7 +49,7 @@ The code agent is still in development, so there might be python code that is no
 ### Other
 
 - [ ] Sandbox environment
-- [ ] Streaming output
+- [x] Streaming output
 - [ ] Improve logging
 - [x] Parallel execution
 

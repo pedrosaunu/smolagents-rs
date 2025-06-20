@@ -147,7 +147,7 @@ pub trait Agent {
         Ok(final_answer.unwrap_or_else(|| "Max steps reached without final answer".to_string()))
     }
     fn stream_run(&mut self, _task: &str) -> Result<String> {
-        todo!()
+        self.direct_run(_task)
     }
     fn run(&mut self, task: &str, stream: bool, reset: bool) -> Result<String> {
         // self.task = task.to_string();
@@ -550,6 +550,90 @@ impl<M: Model + Debug> FunctionCallingAgent<M> {
         )?;
         Ok(Self { base_agent })
     }
+
+    fn step_stream(&mut self, log_entry: &mut Step, callback: &mut dyn FnMut(&str)) -> Result<Option<String>> {
+        match log_entry {
+            Step::ActionStep(step_log) => {
+                let agent_memory = self.base_agent.write_inner_memory_from_logs(None)?;
+                self.base_agent.input_messages = Some(agent_memory.clone());
+                step_log.agent_memory = Some(agent_memory.clone());
+                let tools = self
+                    .base_agent
+                    .tools
+                    .iter()
+                    .map(|tool| tool.tool_info())
+                    .collect::<Vec<_>>();
+                let model_message = self.base_agent.model.run_stream(
+                    self.base_agent.input_messages.as_ref().unwrap().clone(),
+                    tools,
+                    None,
+                    Some(HashMap::from([("stop".to_string(), vec!["Observation:".to_string()])])),
+                    callback,
+                )?;
+
+                let mut observations = Vec::new();
+                let tools = model_message.get_tools_used()?;
+                step_log.tool_call = Some(tools.clone());
+
+                if let Ok(response) = model_message.get_response() {
+                    if !response.trim().is_empty() {
+                        observations.push(response.clone());
+                    }
+                    if tools.is_empty() {
+                        return Ok(Some(response));
+                    }
+                }
+                for tool in tools {
+                    let function_name = tool.clone().function.name;
+
+                    match function_name.as_str() {
+                        "final_answer" => {
+                            info!("Executing tool call: {}", function_name);
+                            let answer = self.base_agent.tools.call(&tool.function)?;
+                            self.base_agent.write_inner_memory_from_logs(None)?;
+                            return Ok(Some(answer));
+                        }
+                        _ => {
+                            info!(
+                                "Executing tool call: {} with arguments: {:?}",
+                                function_name, tool.function.arguments
+                            );
+                            let observation = self.base_agent.tools.call(&tool.function);
+                            match observation {
+                                Ok(observation) => {
+                                    observations.push(format!(
+                                        "Observation from {}: {}",
+                                        function_name,
+                                        observation.chars().take(30000).collect::<String>()
+                                    ));
+                                }
+                                Err(e) => {
+                                    observations.push(e.to_string());
+                                    info!("Error: {}", e);
+                                }
+                            }
+                        }
+                    }
+                }
+                step_log.observations = Some(observations);
+
+                info!(
+                    "Observation: {} \n ....This content has been truncated due to the 30000 character limit.....",
+                    step_log
+                        .observations
+                        .clone()
+                        .unwrap_or_default()
+                        .join("\n")
+                        .trim()
+                        .chars()
+                        .take(30000)
+                        .collect::<String>()
+                );
+                Ok(None)
+            }
+            _ => todo!(),
+        }
+    }
 }
 
 impl<M: Model + Debug> Agent for FunctionCallingAgent<M> {
@@ -665,6 +749,35 @@ impl<M: Model + Debug> Agent for FunctionCallingAgent<M> {
                 todo!()
             }
         }
+    }
+
+    fn stream_run(&mut self, task: &str) -> Result<String> {
+        let mut final_answer: Option<String> = None;
+        while final_answer.is_none() && self.get_step_number() < self.get_max_steps() {
+            println!("Step number: {:?}", self.get_step_number());
+            let mut step_log = Step::ActionStep(AgentStep {
+                agent_memory: None,
+                llm_output: None,
+                tool_call: None,
+                error: None,
+                observations: None,
+                _step: self.get_step_number(),
+            });
+            final_answer = self.step_stream(&mut step_log, &mut |t| print!("{}", t))?;
+            self.get_logs_mut().push(step_log);
+            self.increment_step_number();
+        }
+
+        if final_answer.is_none() && self.get_step_number() >= self.get_max_steps() {
+            final_answer = self.provide_final_answer(task)?;
+        }
+        info!(
+            "Final answer: {}",
+            final_answer
+                .clone()
+                .unwrap_or("Could not find answer".to_string())
+        );
+        Ok(final_answer.unwrap_or_else(|| "Max steps reached without final answer".to_string()))
     }
 }
 
