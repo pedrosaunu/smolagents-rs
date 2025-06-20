@@ -51,7 +51,7 @@ The code agent is still in development, so there might be python code that is no
  - [ ] Sandbox environment
  - [x] Streaming output
  - [x] Improve logging
-- [x] Parallel execution
+ - [x] Parallel execution
 
 ---
 
