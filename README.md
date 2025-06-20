@@ -34,7 +34,7 @@ This is a rust implementation of HF [smolagents](https://github.com/huggingface/
 
 - [x] Tool-Calling Agent
 - [x] CodeAgent
-- [ ] Planning Agent
+- [x] Planning Agent
 
 The code agent is still in development, so there might be python code that is not yet supported and may cause errors. Try using the tool-calling agent for now.
 
@@ -49,7 +49,7 @@ The code agent is still in development, so there might be python code that is no
 ### Other
 
 - [ ] Sandbox environment
-- [ ] Streaming output
+- [x] Streaming output
 - [ ] Improve logging
 - [x] Parallel execution
 
