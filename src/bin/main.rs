@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use colored::*;
 use smolagents_rs::agents::Step;
-use smolagents_rs::agents::{Agent, CodeAgent, FunctionCallingAgent};
+use smolagents_rs::agents::{Agent, CodeAgent, FunctionCallingAgent, PlanningAgent};
 use smolagents_rs::errors::AgentError;
 use smolagents_rs::models::model_traits::{Model, ModelResponse};
 use smolagents_rs::models::ollama::{OllamaModel, OllamaModelBuilder};
@@ -19,6 +19,7 @@ use std::io::{self, Write};
 enum AgentType {
     FunctionCalling,
     Code,
+    Planning,
 }
 
 #[derive(Debug, Clone, ValueEnum)]
@@ -34,7 +35,7 @@ enum ModelType {
     Ollama,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum ModelWrapper {
     OpenAI(OpenAIServerModel),
     Ollama(OllamaModel),
@@ -43,6 +44,7 @@ enum ModelWrapper {
 enum AgentWrapper {
     FunctionCalling(FunctionCallingAgent<ModelWrapper>),
     Code(CodeAgent<ModelWrapper>),
+    Planning(PlanningAgent<ModelWrapper>),
 }
 
 impl AgentWrapper {
@@ -50,12 +52,14 @@ impl AgentWrapper {
         match self {
             AgentWrapper::FunctionCalling(agent) => agent.run(task, stream, reset),
             AgentWrapper::Code(agent) => agent.run(task, stream, reset),
+            AgentWrapper::Planning(agent) => agent.run(task, stream, reset),
         }
     }
     fn get_logs_mut(&mut self) -> &mut Vec<Step> {
         match self {
             AgentWrapper::FunctionCalling(agent) => agent.get_logs_mut(),
             AgentWrapper::Code(agent) => agent.get_logs_mut(),
+            AgentWrapper::Planning(agent) => agent.get_logs_mut(),
         }
     }
 }
@@ -146,6 +150,14 @@ fn main() -> Result<()> {
             None,
         )?),
         AgentType::Code => AgentWrapper::Code(CodeAgent::new(
+            model,
+            tools,
+            None,
+            None,
+            Some("CLI Agent"),
+            None,
+        )?),
+        AgentType::Planning => AgentWrapper::Planning(PlanningAgent::new(
             model,
             tools,
             None,
