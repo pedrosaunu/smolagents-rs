@@ -385,8 +385,7 @@ impl<M: Model> MultiStepAgent<M> {
         max_steps: Option<usize>,
     ) -> Result<Self> {
         // Initialize logger
-        log::set_logger(&LOGGER).unwrap();
-        log::set_max_level(log::LevelFilter::Info);
+        crate::logger::init_logger_from_env();
 
         let name = "MultiStepAgent";
 

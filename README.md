@@ -43,15 +43,15 @@ The code agent is still in development, so there might be python code that is no
 - [x] Google Search Tool
 - [x] DuckDuckGo Tool
 - [x] Website Visit & Scraping Tool
-- [ ] RAG Tool
+- [x] RAG Tool
 - More tools to come...
 
 ### Other
 
-- [ ] Sandbox environment
-- [x] Streaming output
-- [ ] Improve logging
-- [x] Parallel execution
+ - [ ] Sandbox environment
+ - [x] Streaming output
+ - [x] Improve logging
+ - [x] Parallel execution
 
 ---
 
