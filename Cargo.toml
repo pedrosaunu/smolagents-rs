@@ -48,6 +48,10 @@ optional = true
 name = "cli"
 required-features = ["cli", "code-agent"]
 
+[[example]]
+name = "parallel"
+required-features = ["cli", "code-agent"]
+
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
