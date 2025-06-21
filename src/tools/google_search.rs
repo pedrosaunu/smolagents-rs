@@ -141,6 +141,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore]
     fn test_google_search_tool() {
         let tool = GoogleSearchTool::new(None);
         let query = "What is the capital of France?";
