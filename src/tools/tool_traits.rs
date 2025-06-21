@@ -96,7 +96,7 @@ impl ToolGroup for Vec<Box<dyn AnyTool>> {
     }
 }
 
-pub trait AnyTool: Debug {
+pub trait AnyTool: Debug + Send + Sync {
     fn name(&self) -> &'static str;
     fn description(&self) -> &'static str;
     fn forward_json(&self, json_args: serde_json::Value) -> Result<String, AgentError>;
@@ -104,7 +104,7 @@ pub trait AnyTool: Debug {
     fn clone_box(&self) -> Box<dyn AnyTool>;
 }
 
-impl<T: Tool + Clone + 'static> AnyTool for T {
+impl<T: Tool + Clone + Send + Sync + 'static> AnyTool for T {
     fn name(&self) -> &'static str {
         Tool::name(self)
     }

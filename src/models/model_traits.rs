@@ -19,4 +19,18 @@ pub trait Model {
         max_tokens: Option<usize>,
         args: Option<HashMap<String, Vec<String>>>,
     ) -> Result<Box<dyn ModelResponse>, AgentError>;
+
+    fn run_stream(
+        &self,
+        input_messages: Vec<Message>,
+        tools: Vec<ToolInfo>,
+        max_tokens: Option<usize>,
+        args: Option<HashMap<String, Vec<String>>>,
+        callback: &mut dyn FnMut(&str),
+    ) -> Result<Box<dyn ModelResponse>, AgentError> {
+        let response = self.run(input_messages, tools, max_tokens, args)?;
+        let text = response.get_response()?;
+        callback(&text);
+        Ok(response)
+    }
 }

@@ -1,14 +1,14 @@
 //! This module contains the agents that can be used to solve tasks.
 //!
-//! Currently, there are two agents:
+//! Currently, there are three agents:
 //! - The function calling agent. This agent is used for models that have tool calling capabilities.
 //! - The code agent. This agent takes tools and can write simple python code that is executed to solve the task.
+//! - The planning agent. This agent first creates a high level plan and then executes it using the function calling agent.
 //!
 //! To use this agent you need to enable the `code-agent` feature.
 //!
 //! You can also implement your own agents by implementing the `Agent` trait.
 //!
-//! Planning agent is not implemented yet and will be added in the future.
 //!
 use crate::errors::AgentError;
 use crate::models::model_traits::Model;
@@ -21,7 +21,6 @@ use crate::prompts::{
 use crate::tools::{AnyTool, FinalAnswerTool, ToolGroup, ToolInfo};
 use std::collections::HashMap;
 
-use crate::logger::LOGGER;
 use anyhow::Result;
 use colored::Colorize;
 use log::info;
@@ -147,7 +146,7 @@ pub trait Agent {
         Ok(final_answer.unwrap_or_else(|| "Max steps reached without final answer".to_string()))
     }
     fn stream_run(&mut self, _task: &str) -> Result<String> {
-        todo!()
+        self.direct_run(_task)
     }
     fn run(&mut self, task: &str, stream: bool, reset: bool) -> Result<String> {
         // self.task = task.to_string();
@@ -280,7 +279,7 @@ pub trait Agent {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub enum Step {
     PlanningStep(String, String),
     TaskStep(String),
@@ -385,8 +384,7 @@ impl<M: Model> MultiStepAgent<M> {
         max_steps: Option<usize>,
     ) -> Result<Self> {
         // Initialize logger
-        log::set_logger(&LOGGER).unwrap();
-        log::set_max_level(log::LevelFilter::Info);
+        crate::logger::init_logger_from_env();
 
         let name = "MultiStepAgent";
 
@@ -550,6 +548,90 @@ impl<M: Model + Debug> FunctionCallingAgent<M> {
         )?;
         Ok(Self { base_agent })
     }
+
+    fn step_stream(&mut self, log_entry: &mut Step, callback: &mut dyn FnMut(&str)) -> Result<Option<String>> {
+        match log_entry {
+            Step::ActionStep(step_log) => {
+                let agent_memory = self.base_agent.write_inner_memory_from_logs(None)?;
+                self.base_agent.input_messages = Some(agent_memory.clone());
+                step_log.agent_memory = Some(agent_memory.clone());
+                let tools = self
+                    .base_agent
+                    .tools
+                    .iter()
+                    .map(|tool| tool.tool_info())
+                    .collect::<Vec<_>>();
+                let model_message = self.base_agent.model.run_stream(
+                    self.base_agent.input_messages.as_ref().unwrap().clone(),
+                    tools,
+                    None,
+                    Some(HashMap::from([("stop".to_string(), vec!["Observation:".to_string()])])),
+                    callback,
+                )?;
+
+                let mut observations = Vec::new();
+                let tools = model_message.get_tools_used()?;
+                step_log.tool_call = Some(tools.clone());
+
+                if let Ok(response) = model_message.get_response() {
+                    if !response.trim().is_empty() {
+                        observations.push(response.clone());
+                    }
+                    if tools.is_empty() {
+                        return Ok(Some(response));
+                    }
+                }
+                for tool in tools {
+                    let function_name = tool.clone().function.name;
+
+                    match function_name.as_str() {
+                        "final_answer" => {
+                            info!("Executing tool call: {}", function_name);
+                            let answer = self.base_agent.tools.call(&tool.function)?;
+                            self.base_agent.write_inner_memory_from_logs(None)?;
+                            return Ok(Some(answer));
+                        }
+                        _ => {
+                            info!(
+                                "Executing tool call: {} with arguments: {:?}",
+                                function_name, tool.function.arguments
+                            );
+                            let observation = self.base_agent.tools.call(&tool.function);
+                            match observation {
+                                Ok(observation) => {
+                                    observations.push(format!(
+                                        "Observation from {}: {}",
+                                        function_name,
+                                        observation.chars().take(30000).collect::<String>()
+                                    ));
+                                }
+                                Err(e) => {
+                                    observations.push(e.to_string());
+                                    info!("Error: {}", e);
+                                }
+                            }
+                        }
+                    }
+                }
+                step_log.observations = Some(observations);
+
+                info!(
+                    "Observation: {} \n ....This content has been truncated due to the 30000 character limit.....",
+                    step_log
+                        .observations
+                        .clone()
+                        .unwrap_or_default()
+                        .join("\n")
+                        .trim()
+                        .chars()
+                        .take(30000)
+                        .collect::<String>()
+                );
+                Ok(None)
+            }
+            _ => todo!(),
+        }
+    }
 }
 
 impl<M: Model + Debug> Agent for FunctionCallingAgent<M> {
@@ -665,6 +747,35 @@ impl<M: Model + Debug> Agent for FunctionCallingAgent<M> {
                 todo!()
             }
         }
+    }
+
+    fn stream_run(&mut self, task: &str) -> Result<String> {
+        let mut final_answer: Option<String> = None;
+        while final_answer.is_none() && self.get_step_number() < self.get_max_steps() {
+            println!("Step number: {:?}", self.get_step_number());
+            let mut step_log = Step::ActionStep(AgentStep {
+                agent_memory: None,
+                llm_output: None,
+                tool_call: None,
+                error: None,
+                observations: None,
+                _step: self.get_step_number(),
+            });
+            final_answer = self.step_stream(&mut step_log, &mut |t| print!("{}", t))?;
+            self.get_logs_mut().push(step_log);
+            self.increment_step_number();
+        }
+
+        if final_answer.is_none() && self.get_step_number() >= self.get_max_steps() {
+            final_answer = self.provide_final_answer(task)?;
+        }
+        info!(
+            "Final answer: {}",
+            final_answer
+                .clone()
+                .unwrap_or("Could not find answer".to_string())
+        );
+        Ok(final_answer.unwrap_or_else(|| "Max steps reached without final answer".to_string()))
     }
 }
 
@@ -846,4 +957,118 @@ pub fn parse_code_blobs(code_blob: &str) -> Result<String, AgentError> {
     }
 
     Ok(matches.join("\n\n"))
+}
+
+/// An agent that first generates a high level plan and then executes each plan
+/// step using a `FunctionCallingAgent`.
+pub struct PlanningAgent<M: Model + Clone> {
+    planner: MultiStepAgent<M>,
+    executor: FunctionCallingAgent<M>,
+    logs: Vec<Step>,
+}
+
+impl<M: Model + Debug + Clone> PlanningAgent<M> {
+    pub fn new(
+        model: M,
+        tools: Vec<Box<dyn AnyTool>>,
+        system_prompt: Option<&str>,
+        managed_agents: Option<HashMap<String, Box<dyn Agent>>>,
+        description: Option<&str>,
+        max_steps: Option<usize>,
+    ) -> Result<Self> {
+        let planner_tools = tools.iter().map(|t| t.clone_box()).collect();
+        let planner = MultiStepAgent::new(
+            model.clone(),
+            planner_tools,
+            None,
+            None,
+            description,
+            max_steps,
+        )?;
+        let executor = FunctionCallingAgent::new(
+            model,
+            tools,
+            system_prompt,
+            managed_agents,
+            description,
+            max_steps,
+        )?;
+        Ok(Self {
+            planner,
+            executor,
+            logs: Vec::new(),
+        })
+    }
+
+    fn parse_plan(plan: &str) -> Vec<String> {
+        plan.lines()
+            .filter_map(|l| {
+                let trimmed = l.trim();
+                if trimmed.is_empty() || trimmed.starts_with("<end_plan>") {
+                    None
+                } else if trimmed.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+                    let step = trimmed
+                        .trim_start_matches(|c: char| c.is_ascii_digit())
+                        .trim_start_matches(['.', ')', '-', ' '].as_ref())
+                        .to_string();
+                    Some(step)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+}
+
+impl<M: Model + Debug + Clone> Agent for PlanningAgent<M> {
+    fn name(&self) -> &'static str {
+        "PlanningAgent"
+    }
+    fn get_max_steps(&self) -> usize {
+        self.executor.get_max_steps()
+    }
+    fn get_step_number(&self) -> usize {
+        self.executor.get_step_number()
+    }
+    fn reset_step_number(&mut self) {
+        self.executor.reset_step_number();
+    }
+    fn increment_step_number(&mut self) {
+        self.executor.increment_step_number();
+    }
+    fn get_logs_mut(&mut self) -> &mut Vec<Step> {
+        &mut self.logs
+    }
+    fn set_task(&mut self, task: &str) {
+        self.planner.set_task(task);
+        self.executor.set_task(task);
+    }
+    fn get_system_prompt(&self) -> &str {
+        self.executor.get_system_prompt()
+    }
+    fn model(&self) -> &dyn Model {
+        self.executor.model()
+    }
+    fn step(&mut self, log_entry: &mut Step) -> Result<Option<String>> {
+        self.executor.step(log_entry)
+    }
+    fn run(&mut self, task: &str, stream: bool, reset: bool) -> Result<String> {
+        if reset {
+            self.logs.clear();
+        }
+        self.set_task(task);
+        self.planner.planning_step(task, true, 0);
+        if let Some(Step::PlanningStep(plan, facts)) = self.planner.logs.last().cloned() {
+            self.logs.push(Step::PlanningStep(plan.clone(), facts));
+            let steps = Self::parse_plan(&plan);
+            let mut final_answer = String::new();
+            for step_task in steps {
+                final_answer = self.executor.run(&step_task, stream, true)?;
+                self.logs.extend(self.executor.get_logs_mut().drain(..));
+            }
+            Ok(final_answer)
+        } else {
+            Err(anyhow::anyhow!("Failed to generate plan"))
+        }
+    }
 }

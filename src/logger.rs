@@ -1,5 +1,5 @@
 use colored::Colorize;
-use log::{Level, Metadata, Record};
+use log::{Level, LevelFilter, Metadata, Record};
 use std::io::Write;
 use terminal_size::{self, Width};
 
@@ -114,3 +114,18 @@ impl log::Log for ColoredLogger {
 }
 
 pub static LOGGER: ColoredLogger = ColoredLogger;
+
+/// Initialize the global logger.
+///
+/// The log level can be configured using the `SMOLAGENTS_LOG_LEVEL` environment
+/// variable (e.g. "info", "debug", "error"). If the variable is not set,
+/// `info` level logging is used by default.
+pub fn init_logger_from_env() {
+    if log::set_logger(&LOGGER).is_ok() {
+        let level = std::env::var("SMOLAGENTS_LOG_LEVEL")
+            .ok()
+            .and_then(|lvl| lvl.parse::<LevelFilter>().ok())
+            .unwrap_or(LevelFilter::Info);
+        log::set_max_level(level);
+    }
+}
