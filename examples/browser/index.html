@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>smolagents browser demo</title>
+  <script type="module">
+    import init, { parse_code_to_ast } from './pkg/smolagents_browser.js';
+
+    async function initWasm() {
+      await init();
+      document.getElementById('run').disabled = false;
+    }
+
+    function parseInput() {
+      const code = document.getElementById('code').value;
+      const lang = document.getElementById('lang').value;
+      const ast = parse_code_to_ast(lang, code);
+      document.getElementById('output').textContent = ast;
+    }
+
+    document.getElementById('run').addEventListener('click', parseInput);
+
+    initWasm();
+  </script>
+</head>
+<body>
+  <select id="lang">
+    <option value="rust">Rust</option>
+    <option value="python">Python</option>
+    <option value="javascript">JavaScript</option>
+    <option value="bash">Bash</option>
+  </select>
+  <br />
+  <textarea id="code" rows="8" cols="60">fn main() { println!("hello"); }</textarea>
+  <br />
+  <button id="run" disabled>Parse</button>
+  <pre id="output"></pre>
+</body>
+</html>

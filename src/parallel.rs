@@ -20,7 +20,7 @@ pub fn run_tasks_parallel<A>(
     tasks: &[String],
 ) -> Vec<Result<String>>
 where
-    A: Agent + Send + 'static,
+    A: Agent + 'static,
 {
     let mut handles = Vec::new();
 

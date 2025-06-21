@@ -176,5 +176,6 @@ fn main() -> Result<()> {
         serde_json::to_writer_pretty(&mut file, &log)?;
     }
 
+    // End of example; returning Ok(()) indicates successful execution
     Ok(())
 }
