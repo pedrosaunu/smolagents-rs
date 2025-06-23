@@ -386,7 +386,10 @@ impl<M: Model + Debug> Agent for MultiStepAgent<M> {
                     self.input_messages.as_ref().unwrap().clone(),
                     tools,
                     None,
-                    Some(HashMap::from([("stop".to_string(), vec!["Observation:".to_string()])])),
+                    Some(HashMap::from([(
+                        "stop".to_string(),
+                        vec!["Observation:".to_string()],
+                    )])),
                 )?;
 
                 let mut observations = Vec::new();
@@ -427,8 +430,7 @@ impl<M: Model + Debug> Agent for MultiStepAgent<M> {
                                     }
                                     observations.push(format!(
                                         "Observation from {}: {}",
-                                        function_name,
-                                        observation
+                                        function_name, observation
                                     ));
                                 }
                                 Err(e) => {
@@ -640,7 +642,11 @@ impl<M: Model + Debug> FunctionCallingAgent<M> {
         Ok(Self { base_agent })
     }
 
-    fn step_stream(&mut self, log_entry: &mut Step, callback: &mut dyn FnMut(&str)) -> Result<Option<String>> {
+    fn step_stream(
+        &mut self,
+        log_entry: &mut Step,
+        callback: &mut dyn FnMut(&str),
+    ) -> Result<Option<String>> {
         match log_entry {
             Step::ActionStep(step_log) => {
                 let agent_memory = self.base_agent.write_inner_memory_from_logs(None)?;
@@ -656,7 +662,10 @@ impl<M: Model + Debug> FunctionCallingAgent<M> {
                     self.base_agent.input_messages.as_ref().unwrap().clone(),
                     tools,
                     None,
-                    Some(HashMap::from([("stop".to_string(), vec!["Observation:".to_string()])])),
+                    Some(HashMap::from([(
+                        "stop".to_string(),
+                        vec!["Observation:".to_string()],
+                    )])),
                     callback,
                 )?;
 
@@ -698,8 +707,7 @@ impl<M: Model + Debug> FunctionCallingAgent<M> {
                                     }
                                     observations.push(format!(
                                         "Observation from {}: {}",
-                                        function_name,
-                                        observation
+                                        function_name, observation
                                     ));
                                 }
                                 Err(e) => {
@@ -714,9 +722,6 @@ impl<M: Model + Debug> FunctionCallingAgent<M> {
 
                 let summary = truncate_observation(
                     &step_log
-                info!(
-                    "Observation: {} \n ....This content has been truncated due to the 30000 character limit.....",
-                    step_log
                         .observations
                         .clone()
                         .unwrap_or_default()
@@ -724,7 +729,10 @@ impl<M: Model + Debug> FunctionCallingAgent<M> {
                         .trim(),
                     30000,
                 );
-                info!("Observation: {}", summary);
+                info!(
+                    "Observation: {} \n ....This content has been truncated due to the 30000 character limit.....",
+                    summary
+                );
                 Ok(None)
             }
             Step::ToolCall(tool_call) => {
@@ -745,13 +753,6 @@ impl<M: Model + Debug> FunctionCallingAgent<M> {
             }
             Step::SystemPromptStep(prompt) => {
                 info!("System prompt: {}", truncate_observation(prompt, 30000));
-                Ok(None)
-            }
-                        .trim()
-                        .chars()
-                        .take(30000)
-                        .collect::<String>()
-                );
                 Ok(None)
             }
             _ => todo!(),
@@ -803,18 +804,15 @@ impl<M: Model + Debug> Agent for FunctionCallingAgent<M> {
                     .iter()
                     .map(|tool| tool.tool_info())
                     .collect::<Vec<_>>();
-                let model_message = self
-                    .base_agent
-                    .model
-                    .run(
-                        self.base_agent.input_messages.as_ref().unwrap().clone(),
-                        tools,
-                        None,
-                        Some(HashMap::from([(
-                            "stop".to_string(),
-                            vec!["Observation:".to_string()],
-                        )])),
-                    )?;
+                let model_message = self.base_agent.model.run(
+                    self.base_agent.input_messages.as_ref().unwrap().clone(),
+                    tools,
+                    None,
+                    Some(HashMap::from([(
+                        "stop".to_string(),
+                        vec!["Observation:".to_string()],
+                    )])),
+                )?;
 
                 let mut observations = Vec::new();
                 let tools = model_message.get_tools_used()?;
@@ -862,11 +860,7 @@ impl<M: Model + Debug> Agent for FunctionCallingAgent<M> {
                 }
                 step_log.observations = Some(observations);
 
-                let combined = step_log
-                    .observations
-                    .clone()
-                    .unwrap_or_default()
-                    .join("\n");
+                let combined = step_log.observations.clone().unwrap_or_default().join("\n");
 
                 info!(
                     "Observation: {} \n ....This content has been truncated due to the 30000 character limit.....",
@@ -882,14 +876,8 @@ impl<M: Model + Debug> Agent for FunctionCallingAgent<M> {
             Step::ToolCall(tool_call) => {
                 let function_name = tool_call.function.name.clone();
                 info!("Executing tool call: {}", function_name);
-                let observation = self
-                    .base_agent
-                    .tools
-                    .call(&tool_call.function)?;
-                info!(
-                    "Observation: {}",
-                    truncate_observation(&observation, 30000)
-                );
+                let observation = self.base_agent.tools.call(&tool_call.function)?;
+                info!("Observation: {}", truncate_observation(&observation, 30000));
                 return Ok(Some(observation));
             }
             Step::PlanningStep(plan, facts) => {
@@ -1067,24 +1055,18 @@ impl<M: Model + Debug> Agent for CodeAgent<M> {
                             return Ok(Some(answer));
                         }
                         _ => {
-                        step_log.error = Some(AgentError::Execution(e.to_string()));
-                        info!("Error: {}", e);
-                    }
-                },
+                            step_log.error = Some(AgentError::Execution(e.to_string()));
+                            info!("Error: {}", e);
+                        }
+                    },
                 }
                 Ok(None)
             }
             Step::ToolCall(tool_call) => {
                 let function_name = tool_call.function.name.clone();
                 info!("Executing tool call: {}", function_name);
-                let observation = self
-                    .base_agent
-                    .tools
-                    .call(&tool_call.function)?;
-                info!(
-                    "Observation: {}",
-                    truncate_observation(&observation, 30000)
-                );
+                let observation = self.base_agent.tools.call(&tool_call.function)?;
+                info!("Observation: {}", truncate_observation(&observation, 30000));
                 return Ok(Some(observation));
             }
             Step::PlanningStep(plan, facts) => {
@@ -1173,7 +1155,14 @@ pub fn truncate_observation(text: &str, limit: usize) -> String {
     }
     let half = limit / 2;
     let start: String = text.chars().take(half).collect();
-    let end: String = text.chars().rev().take(half).collect::<String>().chars().rev().collect();
+    let end: String = text
+        .chars()
+        .rev()
+        .take(half)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
     format!("{} ...[truncated]... {}", start, end)
 }
 
@@ -1224,7 +1213,12 @@ impl<M: Model + Debug + Clone> PlanningAgent<M> {
                 let trimmed = l.trim();
                 if trimmed.is_empty() || trimmed.starts_with("<end_plan>") {
                     None
-                } else if trimmed.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+                } else if trimmed
+                    .chars()
+                    .next()
+                    .map(|c| c.is_ascii_digit())
+                    .unwrap_or(false)
+                {
                     let step = trimmed
                         .trim_start_matches(|c: char| c.is_ascii_digit())
                         .trim_start_matches(['.', ')', '-', ' '].as_ref())
@@ -1237,7 +1231,6 @@ impl<M: Model + Debug + Clone> PlanningAgent<M> {
             .collect()
     }
 }
-
 
 #[cfg(test)]
 mod tests {
