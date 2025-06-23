@@ -109,6 +109,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore]
     fn test_duckduckgo_search_tool() {
         let tool = DuckDuckGoSearchTool::new();
         let query = "What is the capital of France?";

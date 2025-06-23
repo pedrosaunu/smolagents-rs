@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-
 use serde::Deserialize;
 use serde_json::json;
 
@@ -10,6 +9,7 @@ use crate::{
     models::types::{Message, MessageRole},
     tools::ToolInfo,
 };
+
 
 #[derive(Debug, Deserialize)]
 struct HFGenerated {
@@ -126,6 +126,23 @@ impl Model for HuggingFaceModel {
                 response.text().unwrap_or_default()
             )))
         }
+    }
+
+    fn run_stream(
+        &self,
+        messages: Vec<Message>,
+        tools: Vec<ToolInfo>,
+        max_tokens: Option<usize>,
+        args: Option<HashMap<String, Vec<String>>>,
+        callback: &mut dyn FnMut(&str),
+    ) -> Result<Box<dyn ModelResponse>, AgentError> {
+        let response = self.run(messages, tools, max_tokens, args)?;
+        let text = response.get_response()?;
+        for token in text.split_whitespace() {
+            callback(token);
+            callback(" ");
+        }
+        Ok(response)
     }
 }
 

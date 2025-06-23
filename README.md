@@ -11,6 +11,8 @@ This is a rust implementation of HF [smolagents](https://github.com/huggingface/
   - Google Search
   - DuckDuckGo Search
   - Website Visit & Scraping
+  - Wikipedia Search
+  - Tree-sitter Code Parser (Rust, Python, JavaScript, Bash)
 - 🤝 **OpenAI Integration**: Works seamlessly with GPT models.
 - 🎯 **Task Execution**: Enables autonomous completion of complex tasks.
 - 🔄 **State Management**: Maintains persistent state across steps.
@@ -27,8 +29,8 @@ This is a rust implementation of HF [smolagents](https://github.com/huggingface/
 - [x] OpenAI Models (e.g., GPT-4o, GPT-4o-mini)
 - [x] Ollama Integration
 - [x] Hugging Face API support
-- [ ] Open-source model integration via Candle
-- [ ] Light LLM integration
+ - [x] Open-source model integration via Candle
+- [x] Light LLM integration
 
 ### Agents
 
@@ -44,20 +46,46 @@ The code agent is still in development, so there might be python code that is no
 - [x] DuckDuckGo Tool
 - [x] Website Visit & Scraping Tool
 - [x] RAG Tool
+- [x] Wikipedia Search Tool
+- [x] Tree-sitter Code Parser Tool (multi-language)
 - More tools to come...
 
 ### Other
 
- - [ ] Sandbox environment
- - [x] Streaming output
- - [x] Improve logging
- - [x] Parallel execution
+ - [x] Sandbox environment
+- [x] Streaming output
+- [x] Improve logging
+- [x] Parallel execution
+
+## Known Issues
+
+- `cargo fmt` and `cargo clippy` require additional components that may not be installable in restricted environments.
+- The browser example depends on the `wasm32-unknown-unknown` target and `wasm-pack` which may fail to install without network access.
 
 ---
 
+## TODO Checklist
+
+- [x] Implement ReAct step logic for `MultiStepAgent`
+- [x] Handle truncated observations and decide if they should produce a final answer
+- [x] Support additional tool call types
+- [x] Support other log variants when streaming
+ - [x] Propagate parsing errors instead of returning `None`
+ - [x] Handle unexpected step log types
+- [x] Return the final answer when available
+
+## Remaining Tasks
+
+- [x] Decide if truncated observations should yield a final answer (see TODO in `src/agents.rs`)
+- [x] Remove unreachable pattern branches returning `Ok(None)` in `src/agents.rs`
+- [x] Replace many `unwrap()` calls in `GoogleSearchTool` with proper error handling
+ - [x] Add JavaScript and Bash tests for the `TreeSitterTool`
+- [x] Implement streaming support for Candle, HuggingFace and LightLLM models
+
+
 ## 🚀 Quick Start
 
-Warning: Since there is no implementation of a Sandbox environment, be careful with the tools you use. Preferrably run the agent in a controlled environment using a Docker container.
+The agent can run inside a temporary sandbox directory by passing `--sandbox` or setting the `SANDBOX_DIR` environment variable.
 
 ### Using Docker
 
@@ -95,10 +123,11 @@ Options:
   -a, --agent-type <TYPE>    Agent type [default: function-calling]
   -l, --tools <TOOLS>        Comma-separated list of tools [default: duckduckgo,visit-website]
   -m, --model <TYPE>         Model type [default: open-ai]
-  -k, --api-key <KEY>        API key for OpenAI or Hugging Face models
+  -k, --api-key <KEY>        API key for OpenAI, Hugging Face, or LightLLM models
   --model-id <ID>            Model ID (e.g., "gpt-4" for OpenAI or "qwen2.5" for Ollama) [default: gpt-4o-mini]
   -u, --ollama-url <URL>     Ollama server URL [default: http://localhost:11434]
   -s, --stream               Enable streaming output
+  --sandbox                  Run in an isolated sandbox directory
   -h, --help                 Print help
 ```
 
@@ -118,6 +147,10 @@ smolagents-rs -t "Analyze the latest crypto trends" -s
 
 # Run multiple tasks in parallel
 cargo run --example parallel --features cli,code-agent
+# Compile to WebAssembly for browser usage
+wasm-pack build examples/browser --release
+serve examples/browser
+# Then open `index.html` to try the interactive multi-language AST demo
 ```
 
 ---
@@ -129,6 +162,9 @@ cargo run --example parallel --features cli,code-agent
 - `OPENAI_API_KEY`: Your OpenAI API key (required).
 - `SERPAPI_API_KEY`: Google Search API key (optional).
 - `HF_API_KEY`: Hugging Face API key (optional).
+- `CANDLE_MODEL_PATH`: Path to a local Candle model directory.
+- `LIGHTLLM_API_KEY`: API key for LightLLM server (optional).
+- `SANDBOX_DIR`: Directory for creating the sandbox when `--sandbox` is used.
 
 ---
 
