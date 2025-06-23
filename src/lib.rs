@@ -7,7 +7,7 @@
 //!
 //! ## Example usage:
 //!
-//! ```rust
+//! ```rust,no_run
 //! use smolagents_rs::agents::{Agent, FunctionCallingAgent};
 //! use smolagents_rs::models::openai::OpenAIServerModel;
 //! use smolagents_rs::tools::{AnyTool, DuckDuckGoSearchTool, VisitWebsiteTool};
@@ -25,7 +25,7 @@
 //! ### Code Agent:
 //!
 //! To use the code agent simply enable the `code-agent` feature.
-//! ```rust
+//! ```rust,no_run
 //! use smolagents_rs::agents::{Agent, CodeAgent};
 //! use smolagents_rs::models::openai::OpenAIServerModel;
 //! use smolagents_rs::tools::{AnyTool, DuckDuckGoSearchTool, VisitWebsiteTool};
@@ -51,5 +51,7 @@ pub mod models;
 pub mod prompts;
 pub mod tools;
 pub mod parallel;
+pub mod sandbox;
 
 pub use agents::*;
+pub use sandbox::Sandbox;

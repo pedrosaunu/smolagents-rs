@@ -1,14 +1,14 @@
 //! This module contains the agents that can be used to solve tasks.
 //!
-//! Currently, there are two agents:
+//! Currently, there are three agents:
 //! - The function calling agent. This agent is used for models that have tool calling capabilities.
 //! - The code agent. This agent takes tools and can write simple python code that is executed to solve the task.
+//! - The planning agent. This agent first creates a high level plan and then executes it using the function calling agent.
 //!
 //! To use this agent you need to enable the `code-agent` feature.
 //!
 //! You can also implement your own agents by implementing the `Agent` trait.
 //!
-//! Planning agent is not implemented yet and will be added in the future.
 //!
 use crate::errors::AgentError;
 use crate::models::model_traits::Model;
@@ -21,7 +21,6 @@ use crate::prompts::{
 use crate::tools::{AnyTool, FinalAnswerTool, ToolGroup, ToolInfo};
 use std::collections::HashMap;
 
-use crate::logger::LOGGER;
 use anyhow::Result;
 use colored::Colorize;
 use log::info;
@@ -147,7 +146,7 @@ pub trait Agent {
         Ok(final_answer.unwrap_or_else(|| "Max steps reached without final answer".to_string()))
     }
     fn stream_run(&mut self, _task: &str) -> Result<String> {
-        todo!()
+        self.direct_run(_task)
     }
     fn run(&mut self, task: &str, stream: bool, reset: bool) -> Result<String> {
         // self.task = task.to_string();
@@ -280,7 +279,7 @@ pub trait Agent {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub enum Step {
     PlanningStep(String, String),
     TaskStep(String),
@@ -370,8 +369,99 @@ impl<M: Model + Debug> Agent for MultiStepAgent<M> {
     /// Perform one step in the ReAct framework: the agent thinks, acts, and observes the result.
     ///
     /// Returns None if the step is not final.
-    fn step(&mut self, _: &mut Step) -> Result<Option<String>> {
-        todo!()
+    fn step(&mut self, log_entry: &mut Step) -> Result<Option<String>> {
+        match log_entry {
+            Step::ActionStep(step_log) => {
+                let agent_memory = self.write_inner_memory_from_logs(None)?;
+                self.input_messages = Some(agent_memory.clone());
+                step_log.agent_memory = Some(agent_memory.clone());
+
+                let tools = self
+                    .tools
+                    .iter()
+                    .map(|tool| tool.tool_info())
+                    .collect::<Vec<_>>();
+
+                let model_message = self.model.run(
+                    self.input_messages.as_ref().unwrap().clone(),
+                    tools,
+                    None,
+                    Some(HashMap::from([("stop".to_string(), vec!["Observation:".to_string()])])),
+                )?;
+
+                let mut observations = Vec::new();
+                let tools = model_message.get_tools_used()?;
+                step_log.tool_call = Some(tools.clone());
+
+                if let Ok(response) = model_message.get_response() {
+                    if !response.trim().is_empty() {
+                        observations.push(response.clone());
+                    }
+                    if tools.is_empty() {
+                        return Ok(Some(response));
+                    }
+                }
+
+                for tool in tools {
+                    let function_name = tool.clone().function.name;
+                    match function_name.as_str() {
+                        "final_answer" => {
+                            info!("Executing tool call: {}", function_name);
+                            let answer = self.tools.call(&tool.function)?;
+                            self.write_inner_memory_from_logs(None)?;
+                            return Ok(Some(answer));
+                        }
+                        _ => {
+                            info!(
+                                "Executing tool call: {} with arguments: {:?}",
+                                function_name, tool.function.arguments
+                            );
+                            let observation_res = self.tools.call(&tool.function);
+                            match observation_res {
+                                Ok(mut observation) => {
+                                    if let Some(answer) = detect_final_answer(&observation) {
+                                        return Ok(Some(answer));
+                                    }
+                                    if observation.len() > 30000 {
+                                        observation = truncate_observation(&observation, 30000);
+                                    }
+                                    observations.push(format!(
+                                        "Observation from {}: {}",
+                                        function_name,
+                                        observation
+                                    ));
+                                }
+                                Err(e) => {
+                                    observations.push(e.to_string());
+                                    info!("Error: {}", e);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                step_log.observations = Some(observations);
+                let summary = truncate_observation(
+                    &step_log
+                        .observations
+                        .clone()
+                        .unwrap_or_default()
+                        .join("\n")
+                        .trim(),
+                    30000,
+                );
+                info!("Observation: {}", summary);
+                Ok(None)
+            }
+            Step::ToolCall(tool_call) => {
+                let function_name = tool_call.function.name.clone();
+                info!("Executing tool call: {}", function_name);
+                let observation = self.tools.call(&tool_call.function)?;
+                info!("Observation: {}", truncate_observation(&observation, 30000));
+                Ok(Some(observation))
+            }
+            Step::PlanningStep(..) | Step::TaskStep(..) | Step::SystemPromptStep(..) => Ok(None),
+        }
     }
 }
 
@@ -385,8 +475,7 @@ impl<M: Model> MultiStepAgent<M> {
         max_steps: Option<usize>,
     ) -> Result<Self> {
         // Initialize logger
-        log::set_logger(&LOGGER).unwrap();
-        log::set_max_level(log::LevelFilter::Info);
+        crate::logger::init_logger_from_env();
 
         let name = "MultiStepAgent";
 
@@ -550,6 +639,113 @@ impl<M: Model + Debug> FunctionCallingAgent<M> {
         )?;
         Ok(Self { base_agent })
     }
+
+    fn step_stream(&mut self, log_entry: &mut Step, callback: &mut dyn FnMut(&str)) -> Result<Option<String>> {
+        match log_entry {
+            Step::ActionStep(step_log) => {
+                let agent_memory = self.base_agent.write_inner_memory_from_logs(None)?;
+                self.base_agent.input_messages = Some(agent_memory.clone());
+                step_log.agent_memory = Some(agent_memory.clone());
+                let tools = self
+                    .base_agent
+                    .tools
+                    .iter()
+                    .map(|tool| tool.tool_info())
+                    .collect::<Vec<_>>();
+                let model_message = self.base_agent.model.run_stream(
+                    self.base_agent.input_messages.as_ref().unwrap().clone(),
+                    tools,
+                    None,
+                    Some(HashMap::from([("stop".to_string(), vec!["Observation:".to_string()])])),
+                    callback,
+                )?;
+
+                let mut observations = Vec::new();
+                let tools = model_message.get_tools_used()?;
+                step_log.tool_call = Some(tools.clone());
+
+                if let Ok(response) = model_message.get_response() {
+                    if !response.trim().is_empty() {
+                        observations.push(response.clone());
+                    }
+                    if tools.is_empty() {
+                        return Ok(Some(response));
+                    }
+                }
+                for tool in tools {
+                    let function_name = tool.clone().function.name;
+
+                    match function_name.as_str() {
+                        "final_answer" => {
+                            info!("Executing tool call: {}", function_name);
+                            let answer = self.base_agent.tools.call(&tool.function)?;
+                            self.base_agent.write_inner_memory_from_logs(None)?;
+                            return Ok(Some(answer));
+                        }
+                        _ => {
+                            info!(
+                                "Executing tool call: {} with arguments: {:?}",
+                                function_name, tool.function.arguments
+                            );
+                            let observation_res = self.base_agent.tools.call(&tool.function);
+                            match observation_res {
+                                Ok(mut observation) => {
+                                    if let Some(answer) = detect_final_answer(&observation) {
+                                        return Ok(Some(answer));
+                                    }
+                                    if observation.len() > 30000 {
+                                        observation = truncate_observation(&observation, 30000);
+                                    }
+                                    observations.push(format!(
+                                        "Observation from {}: {}",
+                                        function_name,
+                                        observation
+                                    ));
+                                }
+                                Err(e) => {
+                                    observations.push(e.to_string());
+                                    info!("Error: {}", e);
+                                }
+                            }
+                        }
+                    }
+                }
+                step_log.observations = Some(observations);
+
+                let summary = truncate_observation(
+                    &step_log
+                        .observations
+                        .clone()
+                        .unwrap_or_default()
+                        .join("\n")
+                        .trim(),
+                    30000,
+                );
+                info!("Observation: {}", summary);
+                Ok(None)
+            }
+            Step::ToolCall(tool_call) => {
+                let function_name = tool_call.function.name.clone();
+                info!("Executing tool call: {}", function_name);
+                let observation = self.base_agent.tools.call(&tool_call.function)?;
+                info!("Observation: {}", truncate_observation(&observation, 30000));
+                Ok(Some(observation))
+            }
+            Step::PlanningStep(plan, facts) => {
+                info!("Plan:\n{}", truncate_observation(plan, 30000));
+                info!("Facts:\n{}", truncate_observation(facts, 30000));
+                Ok(None)
+            }
+            Step::TaskStep(task) => {
+                info!("Task: {}", task);
+                Ok(None)
+            }
+            Step::SystemPromptStep(prompt) => {
+                info!("System prompt: {}", truncate_observation(prompt, 30000));
+                Ok(None)
+            }
+        }
+    }
 }
 
 impl<M: Model + Debug> Agent for FunctionCallingAgent<M> {
@@ -655,16 +851,79 @@ impl<M: Model + Debug> Agent for FunctionCallingAgent<M> {
                 }
                 step_log.observations = Some(observations);
 
+                let combined = step_log
+                    .observations
+                    .clone()
+                    .unwrap_or_default()
+                    .join("\n");
+
                 info!(
                     "Observation: {} \n ....This content has been truncated due to the 30000 character limit.....",
-                    step_log.observations.clone().unwrap_or_default().join("\n").trim().chars().take(30000).collect::<String>()
+                    combined.trim().chars().take(30000).collect::<String>()
                 );
-                Ok(None)
+
+                if let Some(answer) = detect_final_answer(&combined) {
+                    Ok(Some(answer))
+                } else {
+                    Ok(None)
+                }
             }
-            _ => {
-                todo!()
+            Step::ToolCall(tool_call) => {
+                let function_name = tool_call.function.name.clone();
+                info!("Executing tool call: {}", function_name);
+                let observation = self
+                    .base_agent
+                    .tools
+                    .call(&tool_call.function)?;
+                info!(
+                    "Observation: {}",
+                    truncate_observation(&observation, 30000)
+                );
+                return Ok(Some(observation));
+            }
+            Step::PlanningStep(plan, facts) => {
+                info!("Plan:\n{}", truncate_observation(plan, 30000));
+                info!("Facts:\n{}", truncate_observation(facts, 30000));
+                return Ok(None);
+            }
+            Step::TaskStep(task) => {
+                info!("Task: {}", task);
+                return Ok(None);
+            }
+            Step::SystemPromptStep(prompt) => {
+                info!("System prompt: {}", truncate_observation(prompt, 30000));
+                return Ok(None);
             }
         }
+    }
+
+    fn stream_run(&mut self, task: &str) -> Result<String> {
+        let mut final_answer: Option<String> = None;
+        while final_answer.is_none() && self.get_step_number() < self.get_max_steps() {
+            println!("Step number: {:?}", self.get_step_number());
+            let mut step_log = Step::ActionStep(AgentStep {
+                agent_memory: None,
+                llm_output: None,
+                tool_call: None,
+                error: None,
+                observations: None,
+                _step: self.get_step_number(),
+            });
+            final_answer = self.step_stream(&mut step_log, &mut |t| print!("{}", t))?;
+            self.get_logs_mut().push(step_log);
+            self.increment_step_number();
+        }
+
+        if final_answer.is_none() && self.get_step_number() >= self.get_max_steps() {
+            final_answer = self.provide_final_answer(task)?;
+        }
+        info!(
+            "Final answer: {}",
+            final_answer
+                .clone()
+                .unwrap_or("Could not find answer".to_string())
+        );
+        Ok(final_answer.unwrap_or_else(|| "Max steps reached without final answer".to_string()))
     }
 }
 
@@ -739,7 +998,7 @@ impl<M: Model + Debug> Agent for CodeAgent<M> {
         self.base_agent.model()
     }
     fn step(&mut self, log_entry: &mut Step) -> Result<Option<String>> {
-        match log_entry {
+        let result = match log_entry {
             Step::ActionStep(step_log) => {
                 let agent_memory = self.base_agent.write_inner_memory_from_logs(None)?;
                 self.base_agent.input_messages = Some(agent_memory.clone());
@@ -758,14 +1017,11 @@ impl<M: Model + Debug> Agent for CodeAgent<M> {
                 let response = llm_output.get_response()?;
                 step_log.llm_output = Some(response.clone());
 
-                let code = match parse_code_blobs(&response) {
-                    Ok(code) => code,
-                    Err(e) => {
-                        step_log.error = Some(e.clone());
-                        info!("Error: {}", response + "\n" + &e.to_string());
-                        return Ok(None);
-                    }
-                };
+                let code = parse_code_blobs(&response).map_err(|e| {
+                    step_log.error = Some(e.clone());
+                    info!("Error: {}\n{}", response, e);
+                    anyhow::anyhow!(e)
+                })?;
 
                 info!("Code: {}", code);
                 step_log.tool_call = Some(vec![ToolCall {
@@ -785,9 +1041,11 @@ impl<M: Model + Debug> Agent for CodeAgent<M> {
                         } else {
                             format!("Observation: {}", result)
                         };
+                        if let Some(answer) = detect_final_answer(&observation) {
+                            return Ok(Some(answer));
+                        }
                         if observation.len() > 30000 {
-                            observation = observation.chars().take(30000).collect::<String>();
-                            observation = format!("{} \n....This content has been truncated due to the 30000 character limit.....", observation);
+                            observation = truncate_observation(&observation, 30000);
                         }
                         info!("Observation: {}", observation);
 
@@ -798,18 +1056,42 @@ impl<M: Model + Debug> Agent for CodeAgent<M> {
                             return Ok(Some(answer));
                         }
                         _ => {
-                            step_log.error = Some(AgentError::Execution(e.to_string()));
-                            info!("Error: {}", e);
-                        }
-                    },
+                        step_log.error = Some(AgentError::Execution(e.to_string()));
+                        info!("Error: {}", e);
+                    }
+                },
                 }
+                Ok(None)
             }
-            _ => {
-                todo!()
+            Step::ToolCall(tool_call) => {
+                let function_name = tool_call.function.name.clone();
+                info!("Executing tool call: {}", function_name);
+                let observation = self
+                    .base_agent
+                    .tools
+                    .call(&tool_call.function)?;
+                info!(
+                    "Observation: {}",
+                    truncate_observation(&observation, 30000)
+                );
+                return Ok(Some(observation));
             }
-        }
+            Step::PlanningStep(plan, facts) => {
+                info!("Plan:\n{}", truncate_observation(plan, 30000));
+                info!("Facts:\n{}", truncate_observation(facts, 30000));
+                return Ok(None);
+            }
+            Step::TaskStep(task) => {
+                info!("Task: {}", task);
+                return Ok(None);
+            }
+            Step::SystemPromptStep(prompt) => {
+                info!("System prompt: {}", truncate_observation(prompt, 30000));
+                return Ok(None);
+            }
+        };
 
-        Ok(None)
+        result
     }
 }
 
@@ -846,4 +1128,179 @@ pub fn parse_code_blobs(code_blob: &str) -> Result<String, AgentError> {
     }
 
     Ok(matches.join("\n\n"))
+}
+
+/// Try to detect a final answer in the given text.
+///
+/// It looks for patterns like `Final Answer: foo` or `final_answer("foo")` and
+/// returns the captured answer if found.
+pub fn detect_final_answer(text: &str) -> Option<String> {
+    let lower = text.to_lowercase();
+    if let Some(start) = lower.find("final answer:") {
+        let answer = text[start + 13..].trim();
+        if !answer.is_empty() {
+            return Some(answer.to_string());
+        }
+    }
+    if let Some(start) = lower.find("final_answer(") {
+        let remainder = &text[start + 13..];
+        if let Some(end) = remainder.find(')') {
+            let answer = remainder[..end].trim().trim_matches('"');
+            if !answer.is_empty() {
+                return Some(answer.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Truncate an observation string while trying to keep both the beginning and
+/// end. Returns the truncated string.
+pub fn truncate_observation(text: &str, limit: usize) -> String {
+    if text.chars().count() <= limit {
+        return text.to_string();
+    }
+    let half = limit / 2;
+    let start: String = text.chars().take(half).collect();
+    let end: String = text.chars().rev().take(half).collect::<String>().chars().rev().collect();
+    format!("{} ...[truncated]... {}", start, end)
+}
+
+/// An agent that first generates a high level plan and then executes each plan
+/// step using a `FunctionCallingAgent`.
+pub struct PlanningAgent<M: Model + Clone> {
+    planner: MultiStepAgent<M>,
+    executor: FunctionCallingAgent<M>,
+    logs: Vec<Step>,
+}
+
+impl<M: Model + Debug + Clone> PlanningAgent<M> {
+    pub fn new(
+        model: M,
+        tools: Vec<Box<dyn AnyTool>>,
+        system_prompt: Option<&str>,
+        managed_agents: Option<HashMap<String, Box<dyn Agent>>>,
+        description: Option<&str>,
+        max_steps: Option<usize>,
+    ) -> Result<Self> {
+        let planner_tools = tools.iter().map(|t| t.clone_box()).collect();
+        let planner = MultiStepAgent::new(
+            model.clone(),
+            planner_tools,
+            None,
+            None,
+            description,
+            max_steps,
+        )?;
+        let executor = FunctionCallingAgent::new(
+            model,
+            tools,
+            system_prompt,
+            managed_agents,
+            description,
+            max_steps,
+        )?;
+        Ok(Self {
+            planner,
+            executor,
+            logs: Vec::new(),
+        })
+    }
+
+    fn parse_plan(plan: &str) -> Vec<String> {
+        plan.lines()
+            .filter_map(|l| {
+                let trimmed = l.trim();
+                if trimmed.is_empty() || trimmed.starts_with("<end_plan>") {
+                    None
+                } else if trimmed.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+                    let step = trimmed
+                        .trim_start_matches(|c: char| c.is_ascii_digit())
+                        .trim_start_matches(['.', ')', '-', ' '].as_ref())
+                        .to_string();
+                    Some(step)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_detect_final_answer_colon() {
+        let text = "Some text. Final Answer: 42";
+        assert_eq!(detect_final_answer(text), Some("42".to_string()));
+    }
+
+    #[test]
+    fn test_detect_final_answer_fn() {
+        let text = "ignored final_answer(\"hello\") trailing";
+        assert_eq!(detect_final_answer(text), Some("hello".to_string()));
+    }
+
+    #[test]
+    fn test_truncate_observation() {
+        let text = "a".repeat(35000);
+        let truncated = truncate_observation(&text, 30000);
+        assert!(truncated.len() < text.len());
+        assert!(truncated.contains("truncated"));
+    }
+}
+
+impl<M: Model + Debug + Clone> Agent for PlanningAgent<M> {
+    fn name(&self) -> &'static str {
+        "PlanningAgent"
+    }
+    fn get_max_steps(&self) -> usize {
+        self.executor.get_max_steps()
+    }
+    fn get_step_number(&self) -> usize {
+        self.executor.get_step_number()
+    }
+    fn reset_step_number(&mut self) {
+        self.executor.reset_step_number();
+    }
+    fn increment_step_number(&mut self) {
+        self.executor.increment_step_number();
+    }
+    fn get_logs_mut(&mut self) -> &mut Vec<Step> {
+        &mut self.logs
+    }
+    fn set_task(&mut self, task: &str) {
+        self.planner.set_task(task);
+        self.executor.set_task(task);
+    }
+    fn get_system_prompt(&self) -> &str {
+        self.executor.get_system_prompt()
+    }
+    fn model(&self) -> &dyn Model {
+        self.executor.model()
+    }
+    fn step(&mut self, log_entry: &mut Step) -> Result<Option<String>> {
+        self.executor.step(log_entry)
+    }
+    fn run(&mut self, task: &str, stream: bool, reset: bool) -> Result<String> {
+        if reset {
+            self.logs.clear();
+        }
+        self.set_task(task);
+        self.planner.planning_step(task, true, 0);
+        if let Some(Step::PlanningStep(plan, facts)) = self.planner.logs.last().cloned() {
+            self.logs.push(Step::PlanningStep(plan.clone(), facts));
+            let steps = Self::parse_plan(&plan);
+            let mut final_answer = String::new();
+            for step_task in steps {
+                final_answer = self.executor.run(&step_task, stream, true)?;
+                self.logs.extend(self.executor.get_logs_mut().drain(..));
+            }
+            Ok(final_answer)
+        } else {
+            Err(anyhow::anyhow!("Failed to generate plan"))
+        }
+    }
 }

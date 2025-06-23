@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use smolagents_rs::agents::{Agent, FunctionCallingAgent};
+use smolagents_rs::agents::FunctionCallingAgent;
 use smolagents_rs::models::openai::OpenAIServerModel;
 use smolagents_rs::parallel::run_tasks_parallel;
 use smolagents_rs::tools::{AnyTool, DuckDuckGoSearchTool, VisitWebsiteTool};

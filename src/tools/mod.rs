@@ -5,6 +5,9 @@ pub mod base;
 pub mod ddg_search;
 pub mod final_answer;
 pub mod google_search;
+pub mod wikipedia_search;
+pub mod rag_tool;
+pub mod tree_sitter_tool;
 pub mod tool_traits;
 pub mod visit_website;
 
@@ -15,6 +18,9 @@ pub use base::*;
 pub use ddg_search::*;
 pub use final_answer::*;
 pub use google_search::*;
+pub use wikipedia_search::*;
+pub use rag_tool::*;
+pub use tree_sitter_tool::*;
 pub use tool_traits::*;
 pub use visit_website::*;
 
