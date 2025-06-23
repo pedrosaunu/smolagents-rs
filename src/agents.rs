@@ -714,6 +714,9 @@ impl<M: Model + Debug> FunctionCallingAgent<M> {
 
                 let summary = truncate_observation(
                     &step_log
+                info!(
+                    "Observation: {} \n ....This content has been truncated due to the 30000 character limit.....",
+                    step_log
                         .observations
                         .clone()
                         .unwrap_or_default()
@@ -744,6 +747,14 @@ impl<M: Model + Debug> FunctionCallingAgent<M> {
                 info!("System prompt: {}", truncate_observation(prompt, 30000));
                 Ok(None)
             }
+                        .trim()
+                        .chars()
+                        .take(30000)
+                        .collect::<String>()
+                );
+                Ok(None)
+            }
+            _ => todo!(),
         }
     }
 }
@@ -1226,6 +1237,7 @@ impl<M: Model + Debug + Clone> PlanningAgent<M> {
             .collect()
     }
 }
+
 
 #[cfg(test)]
 mod tests {

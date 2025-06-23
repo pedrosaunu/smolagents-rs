@@ -14,6 +14,7 @@ use smolagents_rs::models::types::Message;
 use smolagents_rs::tools::{
     AnyTool, DuckDuckGoSearchTool, GoogleSearchTool, RagTool, ToolInfo, VisitWebsiteTool,
     WikipediaSearchTool, TreeSitterTool,
+use smolagents_rs::models::types::Message;
 };
 use smolagents_rs::sandbox::Sandbox;
 use std::collections::HashMap;

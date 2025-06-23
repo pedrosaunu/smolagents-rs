@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-
+use serde::Deserialize;
 use serde_json::json;
 
 use crate::{
@@ -9,6 +9,12 @@ use crate::{
     models::types::{Message, MessageRole},
     tools::ToolInfo,
 };
+
+
+#[derive(Debug, Deserialize)]
+struct HFGenerated {
+    generated_text: String,
+}
 
 #[derive(Debug)]
 pub struct HuggingFaceResponse {
