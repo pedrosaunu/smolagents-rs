@@ -4,19 +4,19 @@ use colored::*;
 use smolagents_rs::agents::Step;
 use smolagents_rs::agents::{Agent, CodeAgent, FunctionCallingAgent, PlanningAgent};
 use smolagents_rs::errors::AgentError;
+use smolagents_rs::models::azure::AzureOpenAIModel;
+use smolagents_rs::models::candle::CandleModel;
+use smolagents_rs::models::huggingface::HuggingFaceModel;
+use smolagents_rs::models::lightllm::LightLLMModel;
 use smolagents_rs::models::model_traits::{Model, ModelResponse};
 use smolagents_rs::models::ollama::{OllamaModel, OllamaModelBuilder};
 use smolagents_rs::models::openai::OpenAIServerModel;
-use smolagents_rs::models::huggingface::HuggingFaceModel;
-use smolagents_rs::models::candle::CandleModel;
-use smolagents_rs::models::lightllm::LightLLMModel;
 use smolagents_rs::models::types::Message;
-use smolagents_rs::tools::{
-    AnyTool, DuckDuckGoSearchTool, GoogleSearchTool, RagTool, ToolInfo, VisitWebsiteTool,
-    WikipediaSearchTool, TreeSitterTool,
-use smolagents_rs::models::types::Message;
-};
 use smolagents_rs::sandbox::Sandbox;
+use smolagents_rs::tools::{
+    AnyTool, DuckDuckGoSearchTool, GoogleSearchTool, RagTool, ToolInfo, TreeSitterTool,
+    VisitWebsiteTool, WikipediaSearchTool,
+};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Write};
@@ -41,6 +41,7 @@ enum ToolType {
 #[derive(Debug, Clone, ValueEnum)]
 enum ModelType {
     OpenAI,
+    AzureOpenAI,
     Ollama,
     HuggingFace,
     Candle,
@@ -50,6 +51,7 @@ enum ModelType {
 #[derive(Debug, Clone)]
 enum ModelWrapper {
     OpenAI(OpenAIServerModel),
+    AzureOpenAI(AzureOpenAIModel),
     Ollama(OllamaModel),
     HuggingFace(HuggingFaceModel),
     Candle(CandleModel),
@@ -88,6 +90,7 @@ impl Model for ModelWrapper {
     ) -> Result<Box<dyn ModelResponse>, AgentError> {
         match self {
             ModelWrapper::OpenAI(m) => Ok(m.run(messages, tools, max_tokens, args)?),
+            ModelWrapper::AzureOpenAI(m) => Ok(m.run(messages, tools, max_tokens, args)?),
             ModelWrapper::Ollama(m) => Ok(m.run(messages, tools, max_tokens, args)?),
             ModelWrapper::HuggingFace(m) => Ok(m.run(messages, tools, max_tokens, args)?),
             ModelWrapper::Candle(m) => Ok(m.run(messages, tools, max_tokens, args)?),
@@ -169,6 +172,13 @@ fn main() -> Result<()> {
             None,
             args.api_key,
         )),
+        ModelType::AzureOpenAI => ModelWrapper::AzureOpenAI(AzureOpenAIModel::new(
+            args.base_url.as_deref(),
+            Some(&args.model_id),
+            None,
+            None,
+            args.api_key,
+        )),
         ModelType::Ollama => ModelWrapper::Ollama(
             OllamaModelBuilder::new()
                 .model_id(&args.model_id)
@@ -182,10 +192,9 @@ fn main() -> Result<()> {
             args.api_key,
         )),
         ModelType::Candle => {
-            let path = args
-                .model_path
-                .clone()
-                .unwrap_or_else(|| std::env::var("CANDLE_MODEL_PATH").expect("CANDLE_MODEL_PATH must be set"));
+            let path = args.model_path.clone().unwrap_or_else(|| {
+                std::env::var("CANDLE_MODEL_PATH").expect("CANDLE_MODEL_PATH must be set")
+            });
             ModelWrapper::Candle(
                 CandleModel::new(&path, None).expect("Failed to load candle model"),
             )

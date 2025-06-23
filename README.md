@@ -27,6 +27,7 @@ This is a rust implementation of HF [smolagents](https://github.com/huggingface/
 ### Models
 
 - [x] OpenAI Models (e.g., GPT-4o, GPT-4o-mini)
+- [x] Azure OpenAI support
 - [x] Ollama Integration
 - [x] Hugging Face API support
  - [x] Open-source model integration via Candle
@@ -125,6 +126,7 @@ Options:
   -m, --model <TYPE>         Model type [default: open-ai]
   -k, --api-key <KEY>        API key for OpenAI, Hugging Face, or LightLLM models
   --model-id <ID>            Model ID (e.g., "gpt-4" for OpenAI or "qwen2.5" for Ollama) [default: gpt-4o-mini]
+  # For Azure OpenAI use --model azure-open-ai and pass your deployment ID as --model-id
   -u, --ollama-url <URL>     Ollama server URL [default: http://localhost:11434]
   -s, --stream               Enable streaming output
   --sandbox                  Run in an isolated sandbox directory
@@ -160,6 +162,10 @@ serve examples/browser
 ### Environment Variables
 
 - `OPENAI_API_KEY`: Your OpenAI API key (required).
+- `AZURE_OPENAI_API_KEY`: API key for Azure OpenAI service (optional).
+- `AZURE_OPENAI_ENDPOINT`: Azure OpenAI endpoint URL (optional).
+- `AZURE_OPENAI_DEPLOYMENT_ID`: Deployment ID for your chat model (optional).
+- `AZURE_OPENAI_API_VERSION`: API version for Azure OpenAI (optional).
 - `SERPAPI_API_KEY`: Google Search API key (optional).
 - `HF_API_KEY`: Hugging Face API key (optional).
 - `CANDLE_MODEL_PATH`: Path to a local Candle model directory.
