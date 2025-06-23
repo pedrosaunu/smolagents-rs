@@ -755,7 +755,6 @@ impl<M: Model + Debug> FunctionCallingAgent<M> {
                 info!("System prompt: {}", truncate_observation(prompt, 30000));
                 Ok(None)
             }
-            _ => todo!(),
         }
     }
 }
