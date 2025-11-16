@@ -189,18 +189,33 @@ serve examples/browser
 - `FUSE_PEER_MODE`: Set to `1` to enable peer networking.
 - `FUSE_PEER_PRIVATE_KEY` / `FUSE_PEER_ATTESTATION`: Required when `FUSE_PEER_MODE` is enabled so the gateway will forward Libp2p traffic.
 - `FUSE_CHUNK_SIZE`: Override the Base64 chunk size (defaults to 256 KiB) when uploading large tool artifacts.
+- `FUSE_CACHE_DIR`: Override the default cache path (`~/.config/smolagents/fuse`) for manuals and run transcripts.
 
 ### CLI flags
 
 - `--fuse-flow <ID>` and `--fuse-deployment <ID>` select the flow/deployment pair. When omitted, the runtime falls back to the environment variables above.
 - `--fuse-peer-mode` toggles peer routing; combine it with the peer environment variables so that the agent can register its keypair.
 - `--emit-fuse-gui-links` prints handy URLs for the official GUI (e.g., `https://console.fuse.local/runs/<id>`), mirroring what the web console would display.
+- `smolagents-rs fuse manual download --manual-id <id> --pubkey $FUSE_MANUAL_PUBKEY` is a helper command (available when the CLI features are enabled) that lets you prefetch and verify a manual before running a flow.
 
 ### Runtime limitations
 
 - Every request/response exchanged with FUSE must be Base64-encoded. The CLI automatically does this, but tool authors must keep payload sizes manageable or rely on chunking.
 - The sandboxed runtime blocks arbitrary outbound networking. Only gateway, manual, and peer endpoints are reachable, so third-party APIs must be exposed as managed FUSE tools.
 - Runs fail fast when the manual signature cannot be verified. Double-check `FUSE_MANUAL_PUBKEY` whenever onboarding a new tenant.
+- Flow retries will reuse the cached run metadata plus `parent_run_id` so the gateway and CLI timelines stay aligned. Keep that cache directory persisted if you want full post-mortems.
+
+### Example invocation
+
+```bash
+FUSE_GATEWAY_URL=https://api.fuse.local \
+FUSE_API_KEY=sk-live... \
+FUSE_MANUAL_ID=customer-manual \
+FUSE_MANUAL_PUBKEY=$(cat manual.pub) \
+FUSE_FLOW_ID=customer-flow \
+FUSE_DEPLOYMENT_ID=customer-deployment \
+smolagents-rs --features cli-deps --fuse-flow customer-flow --fuse-deployment customer-deployment -t "Review the signed manual and summarize available tools"
+```
 
 Refer to [docs/fuse.md](docs/fuse.md) for diagrams and a deeper explanation of how manuals, flows, deployments, runs, and peer mode map onto `smolagents-rs` abstractions.
 
