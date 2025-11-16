@@ -200,22 +200,30 @@ serve examples/browser
 
 ### Runtime limitations
 
-- Every request/response exchanged with FUSE must be Base64-encoded. The CLI automatically does this, but tool authors must keep payload sizes manageable or rely on chunking.
-- The sandboxed runtime blocks arbitrary outbound networking. Only gateway, manual, and peer endpoints are reachable, so third-party APIs must be exposed as managed FUSE tools.
-- Runs fail fast when the manual signature cannot be verified. Double-check `FUSE_MANUAL_PUBKEY` whenever onboarding a new tenant.
-- Flow retries will reuse the cached run metadata plus `parent_run_id` so the gateway and CLI timelines stay aligned. Keep that cache directory persisted if you want full post-mortems.
+- **Base64-only payloads**: every request/response exchanged with FUSE must be Base64-encoded. The CLI automatically does this, but tool authors must keep payload sizes manageable or rely on chunking.
+- **Sandboxed networking**: the runtime blocks arbitrary outbound networking. Only gateway, manual, and peer endpoints are reachable, so third-party APIs must be exposed as managed FUSE tools.
+- **Manual pinning**: runs fail fast when the manual signature or digest cannot be verified. Double-check `FUSE_MANUAL_PUBKEY` and purge the cache (`rm -rf ~/.config/smolagents/fuse/manuals/*` or override `FUSE_CACHE_DIR`) whenever onboarding a new tenant or manual version.
+- **Retry metadata**: flow retries reuse the cached run metadata plus `parent_run_id` so the gateway and CLI timelines stay aligned. Keep that cache directory persisted if you want full post-mortems.
+- **SSE connectivity**: the CLI must keep a Server-Sent Events stream open to receive sandbox logs. Proxies/firewalls that block SSE will cause the run loop to hang because the gateway treats the missing stream as a disconnect.
 
 ### Example invocation
 
 ```bash
-FUSE_GATEWAY_URL=https://api.fuse.local \
-FUSE_API_KEY=sk-live... \
-FUSE_MANUAL_ID=customer-manual \
-FUSE_MANUAL_PUBKEY=$(cat manual.pub) \
-FUSE_FLOW_ID=customer-flow \
-FUSE_DEPLOYMENT_ID=customer-deployment \
-smolagents-rs --features cli-deps --fuse-flow customer-flow --fuse-deployment customer-deployment -t "Review the signed manual and summarize available tools"
+export FUSE_GATEWAY_URL="https://api.fuse.local"
+export FUSE_API_KEY="sk-live..."
+export FUSE_MANUAL_ID="customer-manual"
+export FUSE_MANUAL_PUBKEY="$(cat manual.pub)"
+export FUSE_FLOW_ID="customer-flow"
+export FUSE_DEPLOYMENT_ID="customer-deployment"
+
+smolagents-rs --features cli-deps \
+  --fuse-flow "$FUSE_FLOW_ID" \
+  --fuse-deployment "$FUSE_DEPLOYMENT_ID" \
+  --emit-fuse-gui-links \
+  -t "Review the signed manual and summarize available tools"
 ```
+
+Need peer networking? Append `--fuse-peer-mode` and export `FUSE_PEER_PRIVATE_KEY` plus `FUSE_PEER_ATTESTATION` before running the command above.
 
 Refer to [docs/fuse.md](docs/fuse.md) for diagrams and a deeper explanation of how manuals, flows, deployments, runs, and peer mode map onto `smolagents-rs` abstractions.
 

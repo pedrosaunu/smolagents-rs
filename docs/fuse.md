@@ -46,6 +46,7 @@ This document summarizes the expected FUSE platform architecture and how `smolag
 - The `--fuse-flow` CLI flag (or `FUSE_FLOW_ID`) identifies which flow DAG the agent is targeting. The CLI automatically uploads chained Base64 responses back to `{FUSE_GATEWAY_URL}/runs/{run_id}/steps` using the `FUSE_API_KEY` bearer token.
 - Runtime logs are streamed via Server-Sent Events from `{FUSE_GATEWAY_URL}/runs/{run_id}/events`, allowing the agent loop to surface gateway sandbox output to end users.
 - If a flow involves child flows or retries, the executor increments the `parent_run_id` so the gateway can show a threaded timeline. The run metadata we persist locally mirrors that tree for debugging.
+- SSE connectivity is considered mandatory: the gateway invalidates runs when the log stream disconnects prematurely, so the CLI keeps a long-lived HTTP connection open and retries with backoff when proxies cut idle sockets.
 
 ### 2.3 Peer mode handshake
 
@@ -68,6 +69,17 @@ This document summarizes the expected FUSE platform architecture and how `smolag
 - Because the runtime only accepts Base64 payloads, binary responses must be chunked (`FUSE_CHUNK_SIZE` defaults to 256 KiB) and reassembled client-side.
 - The sandbox cannot reach arbitrary hosts; tools that need the public internet must be modeled as managed FUSE tools or proxied through peers.
 - Flow orchestration will automatically requeue a run when the gateway detects a transient infrastructure failure. `smolagents-rs` annotates the cached run metadata with the retry counter so humans can correlate CLI retries with gateway retries.
+- SSE disconnects, manual digest mismatches, or cache corruption trigger local retries, but only after the CLI flushes the affected cache entry so the next request carries a clean digest/signature pair.
+
+### 2.6 Gateway call-flow checklist
+
+1. **Manual fetch** – `GET /manuals/{manual_id}` with the `FUSE_API_KEY`, verify `signature_base64`, compute a digest, and place the verified JSON plus digest in the cache directory.
+2. **Run creation** – `POST /deployments/{deployment_id}/runs` with the manual digest, deployment metadata, and the Base64-encoded first action. The response returns `run_id`, retry hints, and SSE URLs.
+3. **Log stream** – immediately connect to `{FUSE_GATEWAY_URL}/runs/{run_id}/events` (SSE). The CLI forwards every message to the terminal and treats disconnects as fatal unless the gateway signals completion.
+4. **Chained tool calls** – upload additional Base64 envelopes to `/runs/{run_id}/steps` (or `/runs/{run_id}/children` when branching). Include `parent_run_id` so the orchestration timeline stays ordered.
+5. **Completion** – close out the run when the gateway emits a terminal SSE event, then write the cached run summary for GUI parity.
+
+This explicit checklist mirrors how the GUI exercises the APIs, ensuring the CLI and automated flows remain in lockstep with the official platform.
 
 ## 3. Required configuration
 
