@@ -172,6 +172,61 @@ serve examples/browser
 - `LIGHTLLM_API_KEY`: API key for LightLLM server (optional).
 - `SANDBOX_DIR`: Directory for creating the sandbox when `--sandbox` is used.
 
+## 📡 Using smolagents with FUSE
+
+`smolagents-rs` can be pointed at the FUSE gateway/runtime that was described in the original RFP. Read [docs/fuse.md](docs/fuse.md) for the in-depth architecture notes, then configure the CLI with the following knobs:
+
+### Required environment variables
+
+- `FUSE_GATEWAY_URL`: Base URL for the gateway (REST + SSE endpoints).
+- `FUSE_API_KEY`: Bearer token used for manuals, runs, and uploads.
+- `FUSE_MANUAL_ID`: Manual to fetch and verify before tool hydration.
+- `FUSE_MANUAL_PUBKEY`: Public key (Base64) that validates the signed manual.
+- `FUSE_FLOW_ID` / `FUSE_DEPLOYMENT_ID`: Orchestration objects that the agent should target when submitting runs.
+
+### Optional environment variables
+
+- `FUSE_PEER_MODE`: Set to `1` to enable peer networking.
+- `FUSE_PEER_PRIVATE_KEY` / `FUSE_PEER_ATTESTATION`: Required when `FUSE_PEER_MODE` is enabled so the gateway will forward Libp2p traffic.
+- `FUSE_CHUNK_SIZE`: Override the Base64 chunk size (defaults to 256 KiB) when uploading large tool artifacts.
+- `FUSE_CACHE_DIR`: Override the default cache path (`~/.config/smolagents/fuse`) for manuals and run transcripts.
+
+### CLI flags
+
+- `--fuse-flow <ID>` and `--fuse-deployment <ID>` select the flow/deployment pair. When omitted, the runtime falls back to the environment variables above.
+- `--fuse-peer-mode` toggles peer routing; combine it with the peer environment variables so that the agent can register its keypair.
+- `--emit-fuse-gui-links` prints handy URLs for the official GUI (e.g., `https://console.fuse.local/runs/<id>`), mirroring what the web console would display.
+- `smolagents-rs fuse manual download --manual-id <id> --pubkey $FUSE_MANUAL_PUBKEY` is a helper command (available when the CLI features are enabled) that lets you prefetch and verify a manual before running a flow.
+
+### Runtime limitations
+
+- **Base64-only payloads**: every request/response exchanged with FUSE must be Base64-encoded. The CLI automatically does this, but tool authors must keep payload sizes manageable or rely on chunking.
+- **Sandboxed networking**: the runtime blocks arbitrary outbound networking. Only gateway, manual, and peer endpoints are reachable, so third-party APIs must be exposed as managed FUSE tools.
+- **Manual pinning**: runs fail fast when the manual signature or digest cannot be verified. Double-check `FUSE_MANUAL_PUBKEY` and purge the cache (`rm -rf ~/.config/smolagents/fuse/manuals/*` or override `FUSE_CACHE_DIR`) whenever onboarding a new tenant or manual version.
+- **Retry metadata**: flow retries reuse the cached run metadata plus `parent_run_id` so the gateway and CLI timelines stay aligned. Keep that cache directory persisted if you want full post-mortems.
+- **SSE connectivity**: the CLI must keep a Server-Sent Events stream open to receive sandbox logs. Proxies/firewalls that block SSE will cause the run loop to hang because the gateway treats the missing stream as a disconnect.
+
+### Example invocation
+
+```bash
+export FUSE_GATEWAY_URL="https://api.fuse.local"
+export FUSE_API_KEY="sk-live..."
+export FUSE_MANUAL_ID="customer-manual"
+export FUSE_MANUAL_PUBKEY="$(cat manual.pub)"
+export FUSE_FLOW_ID="customer-flow"
+export FUSE_DEPLOYMENT_ID="customer-deployment"
+
+smolagents-rs --features cli-deps \
+  --fuse-flow "$FUSE_FLOW_ID" \
+  --fuse-deployment "$FUSE_DEPLOYMENT_ID" \
+  --emit-fuse-gui-links \
+  -t "Review the signed manual and summarize available tools"
+```
+
+Need peer networking? Append `--fuse-peer-mode` and export `FUSE_PEER_PRIVATE_KEY` plus `FUSE_PEER_ATTESTATION` before running the command above.
+
+Refer to [docs/fuse.md](docs/fuse.md) for diagrams and a deeper explanation of how manuals, flows, deployments, runs, and peer mode map onto `smolagents-rs` abstractions.
+
 ---
 
 ## 🏗️ Architecture
